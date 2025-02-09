@@ -1,7 +1,7 @@
 defmodule NebulexDistributed.MixProject do
   use Mix.Project
 
-  @source_url "https://github.com/nebulex-project/nebulex_distributed"
+  @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
   @version "3.0.0-dev"
   # @nbx_vsn "3.0.0"
 
@@ -15,13 +15,14 @@ defmodule NebulexDistributed.MixProject do
       deps: deps(),
 
       # Testing
-      test_coverage: [tool: ExCoveralls],
+      test_coverage: [tool: ExCoveralls, export: "test-coverage"],
       preferred_cli_env: [
         check: :test,
         coveralls: :test,
         "coveralls.detail": :test,
         "coveralls.post": :test,
-        "coveralls.html": :test
+        "coveralls.html": :test,
+        "coveralls.json": :test
       ],
 
       # Dialyzer
@@ -53,7 +54,7 @@ defmodule NebulexDistributed.MixProject do
   defp deps do
     [
       nebulex_dep(),
-      {:nebulex_local, github: "nebulex-project/nebulex_local", branch: "main"},
+      {:nebulex_local, github: "elixir-nebulex/nebulex_local", branch: "main"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
       # Test & Code Analysis
@@ -64,6 +65,8 @@ defmodule NebulexDistributed.MixProject do
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:mimic, "~> 1.7", only: :test},
       {:ex2ms, "~> 1.6", only: :test},
+      {:nebulex_adapters_cachex,
+       github: "cabol/nebulex_adapters_cachex", branch: "v3.0.0-dev", only: :test},
 
       # Benchmark Test
       {:benchee, "~> 1.3", only: [:dev, :test]},

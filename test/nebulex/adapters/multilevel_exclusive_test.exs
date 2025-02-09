@@ -5,7 +5,8 @@ defmodule Nebulex.Adapters.MultilevelExclusiveTest do
     except: [
       Nebulex.Cache.QueryableTest,
       Nebulex.Cache.QueryableExpirationTest,
-      Nebulex.Cache.QueryableQueryErrorTest
+      Nebulex.Cache.QueryableQueryErrorTest,
+      Nebulex.Cache.ObservableTest
     ]
 
   use Nebulex.DistributedTest

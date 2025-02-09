@@ -2,7 +2,9 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   use Nebulex.NodeCase
   use Mimic
 
-  use Nebulex.CacheTestCase, except: [Nebulex.Cache.QueryableQueryErrorTest]
+  use Nebulex.CacheTestCase,
+    except: [Nebulex.Cache.QueryableQueryErrorTest, Nebulex.Cache.ObservableTest]
+
   use Nebulex.DistributedTest
   use Nebulex.DistributedInfoTest
   use Nebulex.Adapters.PartitionedInfoStatsTest

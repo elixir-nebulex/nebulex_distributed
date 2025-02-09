@@ -220,6 +220,9 @@ defmodule Nebulex.Adapters.Multilevel do
   # Inherit default transaction implementation
   use Nebulex.Adapter.Transaction
 
+  # Inherit default observable implementation
+  use Nebulex.Adapter.Observable
+
   import Nebulex.Adapter
   import Nebulex.Utils
 

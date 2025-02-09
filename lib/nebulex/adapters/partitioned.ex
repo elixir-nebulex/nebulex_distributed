@@ -343,6 +343,9 @@ defmodule Nebulex.Adapters.Partitioned do
   # Inherit default info implementation
   use Nebulex.Adapters.Common.Info
 
+  # Inherit default observable implementation
+  use Nebulex.Adapter.Observable
+
   # Inherit default keyslot implementation
   use Nebulex.Adapter.Keyslot
 
