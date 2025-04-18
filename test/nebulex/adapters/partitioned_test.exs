@@ -3,7 +3,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   use Mimic
 
   use Nebulex.CacheTestCase,
-    except: [Nebulex.Cache.QueryableQueryErrorTest, Nebulex.Cache.ObservableTest]
+    except: [Nebulex.Cache.QueryableQueryErrorTest]
 
   use Nebulex.DistributedTest
   use Nebulex.DistributedInfoTest
@@ -11,9 +11,8 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
   import Nebulex.CacheCase
 
-  alias Nebulex.Adapter
+  alias Nebulex.{Adapter, Telemetry, Utils}
   alias Nebulex.Distributed.TestCache.{PartitionedCache, PartitionedNilCache}
-  alias Nebulex.Utils
 
   @moduletag capture_log: true
 
@@ -222,7 +221,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     test "bootstrap leaves cache from the cluster when terminated and then rejoins when restarted",
          %{name: name} do
-      prefix = [:nebulex, :cache, :bootstrap]
+      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:bootstrap]
       started = prefix ++ [:started]
       stopped = prefix ++ [:stopped]
       joined = prefix ++ [:joined]

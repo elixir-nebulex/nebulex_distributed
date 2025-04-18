@@ -1,6 +1,6 @@
 defmodule Nebulex.Adapters.Multilevel do
   @moduledoc """
-  Adapter module for Multi-level Cache.
+  Adapter module for the multi-level cache topogy.
 
   The Multi-level adapter is a simple layer that works on top of a local or
   distributed cache implementation, enabling a cache hierarchy by levels.
@@ -98,16 +98,41 @@ defmodule Nebulex.Adapters.Multilevel do
   be events emitted for each cache level. For example, the cache defined before
   `MyApp.Multilevel` will emit the following events:
 
-    * `[:nebulex, :cache, :command, :start]`
-    * `[:nebulex, :cache, :command, :stop]`
-    * `[:nebulex, :cache, :command, :exception]`
+    * Top level cache:
+      * `[:my_app, :multilevel, :command, :start]`
+      * `[:my_app, :multilevel, :command, :stop]`
+      * `[:my_app, :multilevel, :command, :exception]`
 
-  As you may notice, the telemetry prefix by default for the cache is
-  `[:nebulex, :cache]`. You can get the details about each cache level
-  in the metadata.
+    * L1 cache:
+      * `[:my_app, :multilevel, :command, :start]`
+      * `[:my_app, :multilevel, :command, :stop]`
+      * `[:my_app, :multilevel, :command, :exception]`
+
+    * L2 cache:
+      * `[:my_app, :multilevel, :command, :start]`
+      * `[:my_app, :multilevel, :primary, :command, :start]`
+      * `[:my_app, :multilevel, :command, :stop]`
+      * `[:my_app, :multilevel, :primary, :command, :stop]`
+      * `[:my_app, :multilevel, :command, :exception]`
+      * `[:my_app, :multilevel, :primary, :command, :exception]`
+
+  As you may notice, the telemetry prefix by default for all cache levels is
+  `[:my_app, :multilevel]`, but you can get the details about the cache from
+  the metadata. Alternatively, you could specify the `:telemetry_prefix` for
+  each cache level within the `:levels` option. For example:
+
+      config :my_app, MyApp.Multilevel,
+        levels: [
+          {MyApp.Multilevel.L1, telemetry_prefix: [:my_app, :multilevel, :l1]},
+          {MyApp.Multilevel.L2, telemetry_prefix: [:my_app, :multilevel, :l2]}
+        ]
+
+  In this case, the telemetry prefix for the L1 cache will be
+  `[:my_app, :multilevel, :l1]` and the L2 cache will be
+  `[:my_app, :multilevel, :l2]`.
 
   See also the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
-  for more information and examples.
+  for more information.
 
   ## Info API
 
@@ -259,12 +284,11 @@ defmodule Nebulex.Adapters.Multilevel do
 
     # Get adapter options
     name = opts[:name] || cache
-    stats = Keyword.fetch!(opts, :stats)
     levels = Keyword.fetch!(opts, :levels)
     inclusion_policy = Keyword.fetch!(opts, :inclusion_policy)
 
     # Build multi-level specs
-    {children, meta_list} = children(levels, telemetry_prefix, telemetry, stats)
+    {children, meta_list} = children(levels, telemetry_prefix, telemetry)
 
     # Build adapter spec
     child_spec =
@@ -280,26 +304,17 @@ defmodule Nebulex.Adapters.Multilevel do
       name: name,
       levels: meta_list,
       inclusion_policy: inclusion_policy,
-      stats: stats,
       started_at: DateTime.utc_now()
     }
 
     {:ok, child_spec, adapter_meta}
   end
 
-  defp children(levels, telemetry_prefix, telemetry, stats) do
+  defp children(levels, telemetry_prefix, telemetry) do
     levels
     |> Enum.reverse()
     |> Enum.reduce({[], []}, fn {l_cache, l_opts}, {child_acc, meta_acc} ->
-      l_opts =
-        Keyword.merge(
-          [
-            telemetry_prefix: telemetry_prefix,
-            telemetry: telemetry,
-            stats: stats
-          ],
-          l_opts
-        )
+      l_opts = Keyword.merge([telemetry_prefix: telemetry_prefix, telemetry: telemetry], l_opts)
 
       meta = %{cache: l_cache, name: l_opts[:name]}
 

@@ -1,14 +1,13 @@
 defmodule Nebulex.Adapters.Partitioned do
   @moduledoc """
-  Built-in adapter for partitioned cache topology.
+  Adapter module for the partitioned cache topology.
 
-  ## Overall features
+  ## Features
 
     * Partitioned cache topology (Sharding Distribution Model).
     * Configurable primary storage adapter.
     * Configurable Keyslot to distributed the keys across the cluster members.
     * Support for transactions via Erlang global name registration facility.
-    * Stats support rely on the primary storage adapter.
 
   ## Partitioned Cache Topology
 
@@ -167,20 +166,23 @@ defmodule Nebulex.Adapters.Partitioned do
   ## Telemetry events
 
   Since the partitioned adapter depends on the configured primary storage
-  adapter (local cache adapter), this one will also emit Telemetry events.
-  Therefore, there will be events emitted by the partitioned adapter as well
-  as the primary storage adapter. For example, the cache defined before
+  cache (which uses a local cache adapter), this one will also emit Telemetry
+  events. Therefore, there will be events emitted by the partitioned adapter
+  as well as the primary storage cache. For example, the cache defined before
   `MyApp.PartitionedCache` will emit the following events:
 
-    * `[:nebulex, :cache, :command, :start]`
-    * `[:nebulex, :cache, :command, :stop]`
-    * `[:nebulex, :cache, :command, :exception]`
+    * `[:my_app, :partitioned_cache, :command, :start]`
+    * `[:my_app, :partitioned_cache, :primary, :command, :start]`
+    * `[:my_app, :partitioned_cache, :command, :stop]`
+    * `[:my_app, :partitioned_cache, :primary, :command, :stop]`
+    * `[:my_app, :partitioned_cache, :command, :exception]`
+    * `[:my_app, :partitioned_cache, :primary, :command, :exception]`
 
   As you may notice, the telemetry prefix by default for the cache is
-  `[:nebulex, :cache]`. You can get the details about the cache in the metadata;
-  whether it is the partitioned one or its primary storage.
-
-  See also the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
+  `[:my_app, :partitioned_cache]`. However, you could specify the
+  `:telemetry_prefix` for the primary storage within the `:primary` options
+  (if you want to override the default). See the
+  [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
   for more information and examples.
 
   ## Adapter-specific telemetry events
@@ -425,13 +427,10 @@ defmodule Nebulex.Adapters.Partitioned do
     # Get the cache name (required)
     name = opts[:name] || cache
 
-    # Maybe use stats
-    stats = Keyword.fetch!(opts, :stats)
-
     # Primary cache options
     primary_opts =
       Keyword.merge(
-        [telemetry_prefix: telemetry_prefix ++ [:primary], telemetry: telemetry, stats: stats],
+        [telemetry_prefix: telemetry_prefix ++ [:primary], telemetry: telemetry],
         Keyword.fetch!(opts, :primary)
       )
 
@@ -450,8 +449,7 @@ defmodule Nebulex.Adapters.Partitioned do
       telemetry: telemetry,
       name: name,
       primary_name: primary_opts[:name],
-      keyslot: keyslot,
-      stats: stats
+      keyslot: keyslot
     }
 
     # Prepare child spec

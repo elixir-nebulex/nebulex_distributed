@@ -22,23 +22,19 @@ jobs:
           - elixir: 1.18.x
             otp: 27.x
             os: 'ubuntu-latest'
-            style: true
+            lint: true
             coverage: true
             sobelow: true
             dialyzer: true
-            doctor: true
           - elixir: 1.17.x
-            otp: 26.x
+            otp: 27.x
             os: 'ubuntu-latest'
-          - elixir: 1.16.x
-            otp: 26.x
-            os: 'ubuntu-latest'
-          - elixir: 1.15.x
+          - elixir: 1.17.x
             otp: 25.x
             os: 'ubuntu-latest'
           - elixir: 1.14.x
-            otp: 23.x
-            os: 'ubuntu-20.04'
+            otp: 24.x
+            os: 'ubuntu-latest'
 
     env:
       GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -86,14 +82,22 @@ jobs:
           mix deps.get
         if: ${{ steps.mix-cache.outputs.cache-hit != 'true' }}
 
-      - name: Compile code
+      - name: Compile deps
+        run: mix deps.compile
+
+      - name: Check unused dependencies
+        run: mix deps.unlock --check-unused
+        if: ${{ matrix.lint }}
+
+      - name: Compile lint
         run: mix compile --warnings-as-errors
+        if: ${{ matrix.lint }}
 
       - name: Run style and code consistency checks
         run: |
           mix format --check-formatted
           mix credo --strict
-        if: ${{ matrix.style }}
+        if: ${{ matrix.lint }}
 
       - name: Run tests
         run: |
@@ -113,6 +117,10 @@ jobs:
           fail_ci_if_error: true
           flags: unittests-elixir-${{ matrix.elixir }}-otp-${{ matrix.otp }}
         if: ${{ matrix.coverage }}
+
+      - name: Run sobelow
+        run: mix sobelow --skip --exit Low
+        if: ${{ matrix.sobelow }}
 
       - name: Restore PLT Cache
         uses: actions/cache@v3
