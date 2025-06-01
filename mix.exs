@@ -10,7 +10,7 @@ defmodule NebulexDistributed.MixProject do
     [
       app: :nebulex_distributed,
       version: @version,
-      elixir: "~> 1.12",
+      elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
       deps: deps(),
@@ -56,6 +56,7 @@ defmodule NebulexDistributed.MixProject do
     [
       nebulex_dep(),
       {:nebulex_local, "~> 3.0.0-rc.1"},
+      {:ex_hash_ring, "~> 7.0", override: true},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
       # Test & Code Analysis
@@ -96,8 +97,8 @@ defmodule NebulexDistributed.MixProject do
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
-        "coveralls.html",
         "sobelow --exit --skip",
+        "coveralls.html",
         "dialyzer --format short"
       ]
     ]

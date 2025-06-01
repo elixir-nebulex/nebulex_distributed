@@ -6,7 +6,7 @@ defmodule Nebulex.Adapters.Partitioned do
 
     * Partitioned cache topology (Sharding Distribution Model).
     * Configurable primary storage adapter.
-    * Configurable Keyslot to distributed the keys across the cluster members.
+    * `ExHashRing` for distributing the keys across the cluster members.
     * Support for transactions via Erlang global name registration facility.
 
   ## Partitioned Cache Topology
@@ -102,29 +102,10 @@ defmodule Nebulex.Adapters.Partitioned do
           primary_storage_adapter: Nebulex.Adapters.Local
       end
 
-  Also, you can provide a custom keyslot function:
-
-      defmodule MyApp.PartitionedCache do
-        use Nebulex.Cache,
-          otp_app: :my_app,
-          adapter: Nebulex.Adapters.Partitioned,
-          primary_storage_adapter: Nebulex.Adapters.Local
-
-        @behaviour Nebulex.Adapter.Keyslot
-
-        @impl true
-        def hash_slot(key, range) do
-          key
-          |> :erlang.phash2()
-          |> :jchash.compute(range)
-        end
-      end
-
   Where the configuration for the cache must be in your application environment,
   usually defined in your `config/config.exs`:
 
       config :my_app, MyApp.PartitionedCache,
-        keyslot: MyApp.PartitionedCache,
         primary: [
           gc_interval: 3_600_000,
           backend: :shards
@@ -315,7 +296,9 @@ defmodule Nebulex.Adapters.Partitioned do
 
   Get a cluster node based on the given `key`:
 
-      MyCache.get_node("mykey")
+      MyCache.find_node("mykey")
+
+      MyCache.find_node!("mykey")
 
   Joining the cache to the cluster:
 
@@ -347,9 +330,6 @@ defmodule Nebulex.Adapters.Partitioned do
 
   # Inherit default observable implementation
   use Nebulex.Adapter.Observable
-
-  # Inherit default keyslot implementation
-  use Nebulex.Adapter.Keyslot
 
   import Nebulex.Adapter
   import Nebulex.Utils
@@ -388,14 +368,30 @@ defmodule Nebulex.Adapters.Partitioned do
       A convenience function for getting the cluster nodes.
       """
       def nodes(name \\ get_dynamic_cache()) do
-        Cluster.get_nodes(name)
+        name
+        |> lookup_meta()
+        |> get_in([:hash_ring, :name])
+        |> Cluster.ring_nodes()
       end
 
       @doc """
       A convenience function to get the node of the given `key`.
       """
-      def get_node(name \\ get_dynamic_cache(), key) do
-        Cluster.get_node(name, key, lookup_meta(name).keyslot)
+      def find_node(name \\ get_dynamic_cache(), key) do
+        name
+        |> lookup_meta()
+        |> get_in([:hash_ring, :name])
+        |> Cluster.find_node(key)
+      end
+
+      @doc """
+      Same as `find_node/2` but raises an error if an error occurs.
+      """
+      def find_node!(name \\ get_dynamic_cache(), key) do
+        case find_node(name, key) do
+          {:ok, node} -> node
+          {:error, _} = error -> raise error
+        end
       end
 
       @doc """
@@ -440,8 +436,11 @@ defmodule Nebulex.Adapters.Partitioned do
         do: [name: camelize_and_concat([name, Primary])] ++ primary_opts,
         else: primary_opts
 
-    # Keyslot module for selecting nodes
-    keyslot = Keyword.fetch!(opts, :keyslot)
+    # Hash ring options
+    hash_ring =
+      opts
+      |> Keyword.fetch!(:hash_ring)
+      |> Keyword.put_new_lazy(:name, fn -> camelize_and_concat([name, Ring]) end)
 
     # Prepare metadata
     adapter_meta = %{
@@ -449,7 +448,7 @@ defmodule Nebulex.Adapters.Partitioned do
       telemetry: telemetry,
       name: name,
       primary_name: primary_opts[:name],
-      keyslot: keyslot
+      hash_ring: hash_ring
     }
 
     # Prepare child spec
@@ -525,6 +524,9 @@ defmodule Nebulex.Adapters.Partitioned do
     end
 
     case map_reduce(entries, adapter_meta, action, [opts], timeout, {true, []}, reducer) do
+      {:error, _} = error ->
+        error
+
       {true, _} ->
         {:ok, true}
 
@@ -638,12 +640,13 @@ defmodule Nebulex.Adapters.Partitioned do
     end
   end
 
-  defp do_execute(adapter_meta, %{op: op} = query, opts) do
+  defp do_execute(%{hash_ring: hash_ring} = adapter_meta, %{op: op} = query, opts) do
+    ring = Keyword.fetch!(hash_ring, :name)
     timeout = Keyword.fetch!(opts, :timeout)
     query = build_query(query)
 
     RPC.multicall(
-      Cluster.get_nodes(adapter_meta.name),
+      Cluster.ring_nodes(ring),
       __MODULE__,
       :with_dynamic_cache,
       [adapter_meta, op, [query, opts]],
@@ -687,11 +690,13 @@ defmodule Nebulex.Adapters.Partitioned do
   ## Nebulex.Adapter.Transaction
 
   @impl true
-  def transaction(adapter_meta, fun, opts) do
+  def transaction(%{hash_ring: hash_ring} = adapter_meta, fun, opts) do
+    ring = Keyword.fetch!(hash_ring, :name)
+
     opts =
       opts
       |> Options.validate_common_runtime_opts!()
-      |> Keyword.put(:nodes, Cluster.get_nodes(adapter_meta.name))
+      |> Keyword.put(:nodes, Cluster.ring_nodes(ring))
 
     super(adapter_meta, fun, opts)
   end
@@ -722,8 +727,10 @@ defmodule Nebulex.Adapters.Partitioned do
     super(adapter_meta, :server, opts)
   end
 
-  def info(adapter_meta, :nodes, _opts) do
-    {:ok, Cluster.get_nodes(adapter_meta.name)}
+  def info(%{hash_ring: hash_ring}, :nodes, _opts) do
+    ring = Keyword.fetch!(hash_ring, :name)
+
+    {:ok, Cluster.ring_nodes(ring)}
   end
 
   def info(adapter_meta, :nodes_info, opts) do
@@ -778,11 +785,12 @@ defmodule Nebulex.Adapters.Partitioned do
     end
   end
 
-  defp fetch_nodes_info(adapter_meta, spec, opts) do
+  defp fetch_nodes_info(%{hash_ring: hash_ring} = adapter_meta, spec, opts) do
     opts = Options.validate_common_runtime_opts!(opts)
+    ring = Keyword.fetch!(hash_ring, :name)
 
     RPC.multicall(
-      Cluster.get_nodes(adapter_meta.name),
+      Cluster.ring_nodes(ring),
       __MODULE__,
       :with_dynamic_cache,
       [adapter_meta, :info, [spec, opts]],
@@ -839,16 +847,18 @@ defmodule Nebulex.Adapters.Partitioned do
     end
   end
 
-  defp get_node(%{name: name, keyslot: keyslot}, key) do
-    Cluster.get_node(name, key, keyslot)
+  defp find_node(%{hash_ring: hash_ring}, key) do
+    hash_ring
+    |> Keyword.fetch!(:name)
+    |> Cluster.find_node(key)
   end
 
   defp call(adapter_meta, key, action, args, opts) do
     timeout = Keyword.fetch!(opts, :timeout)
 
-    adapter_meta
-    |> get_node(key)
-    |> RPC.call(__MODULE__, :with_dynamic_cache, [adapter_meta, action, args], timeout)
+    with {:ok, node} <- find_node(adapter_meta, key) do
+      RPC.call(node, __MODULE__, :with_dynamic_cache, [adapter_meta, action, args], timeout)
+    end
   end
 
   defp map_reduce(enum, meta, action, args, timeout, acc, reducer, group_fun \\ & &1) do
@@ -858,14 +868,23 @@ defmodule Nebulex.Adapters.Partitioned do
       {node, {__MODULE__, :with_dynamic_cache, [meta, action, [group_fun.(group) | args]]}}
     end)
     |> RPC.multi_mfa_call(timeout, acc, reducer)
+  catch
+    error -> error
   end
 
   defp group_by_node(enum, adapter_meta, action) when action in [:put_all, :put_new_all] do
-    Enum.group_by(enum, &get_node(adapter_meta, elem(&1, 0)))
+    Enum.group_by(enum, &find_node_or_throw(adapter_meta, elem(&1, 0)))
   end
 
   defp group_by_node(enum, adapter_meta, _action) do
-    Enum.group_by(enum, &get_node(adapter_meta, &1))
+    Enum.group_by(enum, &find_node_or_throw(adapter_meta, &1))
+  end
+
+  defp find_node_or_throw(adapter_meta, key) do
+    case find_node(adapter_meta, key) do
+      {:ok, node} -> node
+      {:error, _} = error -> throw(error)
+    end
   end
 
   defp handle_rpc_multi_call({res, []}, _action, fun) do
@@ -879,9 +898,11 @@ defmodule Nebulex.Adapters.Partitioned do
       action: action
   end
 
+  ## Error formatting
+
   @doc false
-  def format_error({:rpc, {:unexpected_errors, errors}}, opts) do
-    action = Keyword.fetch!(opts, :action)
+  def format_error({:rpc, {:unexpected_errors, errors}}, metadata) do
+    action = Keyword.fetch!(metadata, :action)
 
     formatted_errors =
       Enum.map_join(errors, "\n\n", fn {{:error, reason}, node} ->

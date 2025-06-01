@@ -434,7 +434,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
 
   describe "distributed levels" do
     test "return cluster nodes" do
-      assert Cluster.get_nodes(:multilevel_inclusive_l3) == [node()]
+      assert Cluster.pg_nodes(:multilevel_inclusive_l3) == [node()]
     end
 
     test "joining new node" do
@@ -448,7 +448,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
         )
 
       # check cluster nodes
-      assert Cluster.get_nodes(:multilevel_inclusive_l3) == [node, node()]
+      assert Cluster.pg_nodes(:multilevel_inclusive_l3) == [node, node()]
 
       kv_pairs = for k <- 1..100, do: {k, k}
 

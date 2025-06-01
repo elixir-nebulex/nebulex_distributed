@@ -25,7 +25,8 @@ the primary cache storage with the option `:primary_storage_adapter`.
 
 ## Installation
 
-Add `:nebulex_distributed` to your list of dependencies in `mix.exs`:
+`:nebulex_distributed` requires Erlang/OTP 25 or later. Then add
+`:nebulex_distributed` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do

@@ -21,15 +21,21 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
   setup do
     cluster = :lists.usort([@primary | Application.get_env(:nebulex_distributed, :nodes, [])])
+    nodes = [node() | Node.list()]
 
     node_pid_list =
       start_caches(
-        [node() | Node.list()],
+        nodes,
         [
-          {PartitionedCache, [name: @cache_name, join_timeout: 2000]},
-          {PartitionedNilCache, [join_timeout: 2000]}
+          {PartitionedCache, name: @cache_name},
+          {PartitionedNilCache, []}
         ]
       )
+
+    assert_eventually fn ->
+      assert PartitionedCache.nodes() |> length == length(nodes)
+      assert PartitionedNilCache.nodes() |> length == length(nodes)
+    end
 
     default_dynamic_cache = PartitionedCache.get_dynamic_cache()
     _ = PartitionedCache.put_dynamic_cache(@cache_name)
@@ -44,6 +50,21 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     {:ok,
      cache: PartitionedCache, name: @cache_name, cluster: cluster, nil_cache: PartitionedNilCache}
+  end
+
+  describe "ring" do
+    test "error: find_node" do
+      ExHashRing.Ring
+      |> expect(:find_node, 2, fn _, _ -> {:error, :not_found} end)
+
+      assert_raise Nebulex.Error, ~r"Error finding node in ring", fn ->
+        PartitionedCache.put_all!(error: :find_node_error)
+      end
+
+      assert_raise Nebulex.Error, ~r"Error finding node in ring", fn ->
+        PartitionedCache.get_all!(in: [:error, :finding, :node])
+      end
+    end
   end
 
   describe "c:init/1" do
@@ -72,94 +93,9 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
         end
       end
     end
-
-    test "fails because unloaded keyslot module" do
-      _ = Process.flag(:trap_exit, true)
-
-      assert {:error, {%NimbleOptions.ValidationError{message: msg}, _}} =
-               PartitionedCache.start_link(
-                 name: :unloaded_keyslot,
-                 keyslot: UnloadedKeyslot
-               )
-
-      assert Regex.match?(~r"module UnloadedKeyslot was not compiled", msg)
-    end
-
-    test "fails because keyslot module does not implement expected behaviour" do
-      _ = Process.flag(:trap_exit, true)
-
-      assert {:error, {%NimbleOptions.ValidationError{message: msg}, _}} =
-               PartitionedCache.start_link(
-                 name: :invalid_keyslot,
-                 keyslot: __MODULE__
-               )
-
-      mod = inspect(__MODULE__)
-      behaviour = "Nebulex.Adapter.Keyslot"
-
-      expected = "the adapter expects the option value #{mod} to list #{behaviour} as a behaviour"
-
-      assert Regex.match?(~r/#{expected}/, msg)
-    end
-
-    test "fails because invalid keyslot option" do
-      _ = Process.flag(:trap_exit, true)
-
-      assert {:error, {%NimbleOptions.ValidationError{message: msg}, _}} =
-               PartitionedCache.start_link(
-                 name: :invalid_keyslot,
-                 keyslot: "invalid"
-               )
-
-      assert Regex.match?(
-               ~r"invalid value for :keyslot option: expected a module, got: \"invalid\"",
-               msg
-             )
-    end
   end
 
-  describe "partitioned cache" do
-    test "custom keyslot" do
-      defmodule Keyslot do
-        @behaviour Nebulex.Adapter.Keyslot
-
-        @impl true
-        def hash_slot(key, range) do
-          key
-          |> :erlang.phash2()
-          |> rem(range)
-        end
-      end
-
-      test_with_dynamic_cache(PartitionedCache, [name: :custom_keyslot, keyslot: Keyslot], fn ->
-        refute PartitionedCache.get!("foo")
-        assert PartitionedCache.put("foo", "bar") == :ok
-        assert PartitionedCache.get!("foo") == "bar"
-      end)
-    end
-
-    test "custom keyslot supports two item tuple keys for get_all" do
-      defmodule TupleKeyslot do
-        @behaviour Nebulex.Adapter.Keyslot
-
-        @impl true
-        def hash_slot({_, _} = key, range) do
-          key
-          |> :erlang.phash2()
-          |> rem(range)
-        end
-      end
-
-      test_with_dynamic_cache(
-        PartitionedCache,
-        [name: :custom_keyslot_with_tuple_keys, keyslot: TupleKeyslot],
-        fn ->
-          assert PartitionedCache.put_all!([{{"foo", 1}, "bar"}]) == :ok
-          assert PartitionedCache.get_all!(in: [{"foo", 1}]) |> Map.new() == %{{"foo", 1} => "bar"}
-        end
-      )
-    end
-
+  describe "cache operation" do
     test "get_and_update" do
       assert PartitionedCache.get_and_update!(1, &PartitionedCache.get_and_update_fun/1) == {nil, 1}
       assert PartitionedCache.get_and_update!(1, &PartitionedCache.get_and_update_fun/1) == {1, 2}
@@ -182,37 +118,45 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   describe "cluster scenario:" do
     test "node leaves and then rejoins", %{name: name, cluster: cluster} do
       assert node() == @primary
-      assert :lists.usort(Node.list()) == cluster -- [node()]
-      assert PartitionedCache.nodes() == cluster
+      assert Node.list() |> :lists.usort() == cluster -- [node()]
+      assert PartitionedCache.nodes() |> Enum.sort() == cluster |> Enum.sort()
 
       PartitionedCache.with_dynamic_cache(name, fn ->
         :ok = PartitionedCache.leave_cluster()
 
-        assert PartitionedCache.nodes() == cluster -- [node()]
+        assert_eventually fn ->
+          assert PartitionedCache.nodes() |> Enum.sort() == (cluster -- [node()]) |> Enum.sort()
+        end
       end)
 
       PartitionedCache.with_dynamic_cache(name, fn ->
         :ok = PartitionedCache.join_cluster()
 
-        assert PartitionedCache.nodes() == cluster
+        assert_eventually fn ->
+          assert PartitionedCache.nodes() |> Enum.sort() == cluster |> Enum.sort()
+        end
       end)
     end
 
     test "teardown cache node", %{cluster: cluster} do
-      assert PartitionedCache.nodes() == cluster
+      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:bootstrap]
+      nodes_removed = prefix ++ [:nodes_removed]
 
-      assert PartitionedCache.put(1, 1) == :ok
-      assert PartitionedCache.get!(1) == 1
+      with_telemetry_handler __MODULE__, [nodes_removed], fn ->
+        assert PartitionedCache.nodes() |> Enum.sort() == cluster |> Enum.sort()
 
-      node = teardown_cache(1)
+        assert PartitionedCache.put(1234, 1234) == :ok
+        assert PartitionedCache.get!(1234) == 1234
 
-      wait_until fn ->
-        assert PartitionedCache.nodes() == cluster -- [node]
+        node = teardown_cache(1234)
+
+        assert_receive {^nodes_removed, %{system_time: _}, %{nodes: nodes}}, 5000
+        assert node in nodes
+
+        refute PartitionedCache.get!(1234)
       end
 
-      refute PartitionedCache.get!(1)
-
-      assert :ok == PartitionedCache.put_all([{4, 44}, {2, 2}, {1, 1}])
+      :ok = PartitionedCache.put_all([{4, 44}, {2, 2}, {1, 1}])
 
       assert PartitionedCache.get!(4) == 44
       assert PartitionedCache.get!(2) == 2
@@ -225,10 +169,15 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       started = prefix ++ [:started]
       stopped = prefix ++ [:stopped]
       joined = prefix ++ [:joined]
+      nodes_added = prefix ++ [:nodes_added]
       exit_sig = prefix ++ [:exit]
+      events = [started, stopped, joined, nodes_added, exit_sig]
 
-      with_telemetry_handler __MODULE__, [started, stopped, joined, exit_sig], fn ->
-        assert node() in PartitionedCache.nodes()
+      node = node()
+      nodes = PartitionedCache.nodes()
+
+      with_telemetry_handler __MODULE__, events, fn ->
+        assert node in nodes
 
         true =
           [name, Bootstrap]
@@ -237,21 +186,13 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
           |> Process.exit(:stop)
 
         assert_receive {^exit_sig, %{system_time: _}, %{reason: :stop}}, 5000
-        assert_receive {^stopped, %{system_time: _}, %{reason: :stop, cluster_nodes: nodes}}, 5000
-
-        refute node() in nodes
+        assert_receive {^stopped, %{system_time: _}, %{reason: :stop, node: ^node}}, 5000
 
         assert_receive {^started, %{system_time: _}, %{}}, 5000
-        assert_receive {^joined, %{system_time: _}, %{cluster_nodes: nodes}}, 5000
+        assert_receive {^joined, %{system_time: _}, %{node: ^node}}, 5000
+        assert_receive {^nodes_added, %{system_time: _}, %{nodes: _}}, 5000
 
-        assert node() in nodes
-
-        wait_until fn ->
-          assert nodes -- PartitionedCache.nodes() == []
-        end
-
-        assert_receive {^joined, %{system_time: _}, %{cluster_nodes: nodes}}, 5000
-        assert node() in nodes
+        assert node in PartitionedCache.nodes()
       end
     end
   end
@@ -272,11 +213,11 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     test "error: timeout " do
       msg =
-        PartitionedNilCache.get_node(1)
+        PartitionedNilCache.find_node!(1234)
         |> rpc_error(PartitionedNilCache, :fetch, 2, :timeout)
 
       assert_raise Nebulex.Error, msg, fn ->
-        PartitionedNilCache.get!(1, nil, timeout: 0, before: fn -> Process.sleep(1000) end)
+        PartitionedNilCache.get!(1234, nil, timeout: 0, before: fn -> Process.sleep(1000) end)
       end
     end
 
@@ -300,7 +241,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     test "error: raises exception" do
       assert_raise RuntimeError, ~r"\*\* \(ArgumentError\) error", fn ->
-        PartitionedNilCache.fetch!(1, before: &PartitionedNilCache.raise_error/0)
+        PartitionedNilCache.fetch!(1234, before: &PartitionedNilCache.raise_error/0)
       end
 
       assert_raise RuntimeError, ~r"\*\* \(ArgumentError\) error", fn ->
@@ -311,16 +252,16 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
     test "error: exit signal" do
       p1 = "the process that executed the command exited with reason"
       p2 = "RuntimeError"
-      p3 = Regex.escape("Node:\n\n#{inspect(PartitionedNilCache.get_node(1))}")
+      p3 = Regex.escape("Node:\n\n#{inspect(PartitionedNilCache.find_node!(1234))}")
 
       regex = ~r/(#{p1})(.*)(#{p2})(.*)(#{p3})/s
 
       assert_raise Nebulex.Error, regex, fn ->
-        PartitionedNilCache.fetch!(1, before: &PartitionedNilCache.exit_signal/0)
+        PartitionedNilCache.fetch!(1234, before: &PartitionedNilCache.exit_signal/0)
       end
 
       assert_raise Nebulex.Error, regex, fn ->
-        PartitionedNilCache.put_new_all!(%{"1" => "1"},
+        PartitionedNilCache.put_new_all!(%{1234 => 1234},
           before: &PartitionedNilCache.exit_signal/0
         )
       end
@@ -341,16 +282,16 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       p1 = "the applied function exited with reason: \"bye\""
       p2 = Regex.escape("Cache command:\n\n")
       p3 = Regex.escape("PartitionedNilCache.")
-      p4 = Regex.escape("Node:\n\n#{inspect(PartitionedNilCache.get_node(1))}")
+      p4 = Regex.escape("Node:\n\n#{inspect(PartitionedNilCache.find_node!(1234))}")
 
       regex = ~r/(#{p1})(.*)(#{p2})(.*)(#{p3})(.*)(#{p4})/s
 
       assert_raise Nebulex.Error, regex, fn ->
-        PartitionedNilCache.fetch!(1, before: &PartitionedNilCache.exit/0)
+        PartitionedNilCache.fetch!(1234, before: &PartitionedNilCache.exit/0)
       end
 
       assert_raise Nebulex.Error, regex, fn ->
-        PartitionedNilCache.put_new_all!(%{"1" => "1"},
+        PartitionedNilCache.put_new_all!(%{1234 => 1234},
           before: &PartitionedNilCache.exit/0
         )
       end
@@ -369,8 +310,8 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       node = :"invalid@127.0.0.1"
 
       Nebulex.Distributed.Cluster
-      |> stub(:get_nodes, fn _ -> [node] end)
-      |> stub(:get_node, fn _, _, _ -> node end)
+      |> stub(:ring_nodes, fn _ -> [node] end)
+      |> stub(:find_node, fn _, _ -> {:ok, node} end)
 
       assert_raise Nebulex.Error,
                    ~r"#{rpc_error(node, PartitionedNilCache, :fetch, 2, :noconnection)}",
@@ -397,7 +338,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   ## Private Functions
 
   defp teardown_cache(key) do
-    node = PartitionedCache.get_node(key)
+    node = PartitionedCache.find_node!(key)
     remote_pid = :rpc.call(node, Process, :whereis, [@cache_name])
     :ok = :rpc.call(node, Supervisor, :stop, [remote_pid])
 

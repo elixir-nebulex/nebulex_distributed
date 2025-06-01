@@ -22,7 +22,8 @@ end
   Nebulex.Distributed.Cluster,
   Nebulex.Distributed.TestCache.Multilevel.L1,
   Nebulex.Distributed.TestCache.Multilevel.L2,
-  Nebulex.Distributed.TestCache.Multilevel.L3
+  Nebulex.Distributed.TestCache.Multilevel.L3,
+  ExHashRing.Ring
 ]
 |> Enum.each(&Mimic.copy/1)
 

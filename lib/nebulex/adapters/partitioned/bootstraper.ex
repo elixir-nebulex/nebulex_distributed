@@ -4,11 +4,12 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
 
   import Nebulex.Utils
 
+  alias ExHashRing.Ring
   alias Nebulex.Distributed.Cluster
   alias Nebulex.Telemetry
 
   # State
-  defstruct [:adapter_meta, :join_timeout]
+  defstruct [:adapter_meta, :ring, :pg_ref]
 
   ## API
 
@@ -24,12 +25,15 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
   ## GenServer Callbacks
 
   @impl true
-  def init({adapter_meta, opts}) do
+  def init({adapter_meta, _opts}) do
     # Trap exit signals to run cleanup job
     _ = Process.flag(:trap_exit, true)
 
     # Bootstrap started
     :ok = dispatch_telemetry_event(:started, adapter_meta)
+
+    # Subscribe the bootstraper to updates from the cluster
+    pg_ref = Cluster.monitor_scope()
 
     # Ensure joining the cluster when the cache supervision tree is started
     :ok = Cluster.join(adapter_meta.name)
@@ -38,30 +42,49 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
     :ok = dispatch_telemetry_event(:joined, adapter_meta)
 
     # Build initial state
-    state = build_state(adapter_meta, opts)
+    state = build_state(adapter_meta, pg_ref)
+
+    # Set up the ring
+    :ok = add_ring_nodes(state.ring, [node()], state.adapter_meta)
 
     # Start bootstrap process
-    {:ok, state, state.join_timeout}
+    {:ok, state}
   end
 
   @impl true
   def handle_info(message, state)
 
-  def handle_info(:timeout, %__MODULE__{adapter_meta: adapter_meta} = state) do
-    # Ensure it is always joined to the cluster
-    :ok = Cluster.join(adapter_meta.name)
-
-    # Bootstrap joined the cache to the cluster
-    :ok = dispatch_telemetry_event(:joined, adapter_meta)
-
-    {:noreply, state, state.join_timeout}
-  end
-
+  # Handle EXIT signals
   def handle_info({:EXIT, _from, reason}, %__MODULE__{adapter_meta: adapter_meta} = state) do
     # Bootstrap received exit signal
     :ok = dispatch_telemetry_event(:exit, adapter_meta, %{reason: reason})
 
     {:stop, reason, state}
+  end
+
+  # PG join event
+  def handle_info(
+        {pg_ref, :join, group, pids},
+        %__MODULE__{pg_ref: pg_ref, adapter_meta: %{name: group} = adapter_meta, ring: ring} = state
+      ) do
+    :ok = add_ring_nodes(ring, pids, adapter_meta)
+
+    {:noreply, state}
+  end
+
+  # PG leave event
+  def handle_info(
+        {pg_ref, :leave, group, pids},
+        %__MODULE__{pg_ref: pg_ref, adapter_meta: %{name: group} = adapter_meta, ring: ring} = state
+      ) do
+    :ok = rem_ring_nodes(ring, pids, adapter_meta)
+
+    {:noreply, state}
+  end
+
+  # Ignore
+  def handle_info(_info, state) do
+    {:noreply, state}
   end
 
   @impl true
@@ -75,11 +98,15 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
 
   ## Private Functions
 
-  defp build_state(adapter_meta, opts) do
-    # Join timeout to ensure it is always joined to the cluster
-    join_timeout = Keyword.fetch!(opts, :join_timeout)
+  # Inline common instructions
+  @compile {:inline, node_names: 1}
 
-    %__MODULE__{adapter_meta: adapter_meta, join_timeout: join_timeout}
+  defp build_state(%{hash_ring: hash_ring} = adapter_meta, pg_ref) do
+    %__MODULE__{
+      adapter_meta: adapter_meta,
+      ring: Keyword.fetch!(hash_ring, :name),
+      pg_ref: pg_ref
+    }
   end
 
   defp dispatch_telemetry_event(event, adapter_meta, meta \\ %{}) do
@@ -88,8 +115,46 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
       %{system_time: System.system_time()},
       Map.merge(meta, %{
         adapter_meta: adapter_meta,
-        cluster_nodes: Cluster.get_nodes(adapter_meta.name)
+        node: node()
       })
     )
+  end
+
+  defp add_ring_nodes(ring, pids, %{name: name} = adapter_meta) do
+    name
+    |> Cluster.pg_nodes()
+    |> MapSet.new()
+    |> MapSet.difference(ring |> Cluster.ring_nodes() |> MapSet.new())
+    |> MapSet.union(pids |> node_names() |> MapSet.new())
+    |> MapSet.to_list()
+    |> for_ring_node(&Ring.add_node(ring, &1))
+    |> then(&dispatch_telemetry_event(:nodes_added, adapter_meta, %{nodes: &1}))
+  end
+
+  defp rem_ring_nodes(ring, pids, %{name: name} = adapter_meta) do
+    ring
+    |> Cluster.ring_nodes()
+    |> MapSet.new()
+    |> MapSet.difference(name |> Cluster.pg_nodes() |> MapSet.new())
+    |> MapSet.union(pids |> node_names() |> MapSet.new())
+    |> MapSet.to_list()
+    |> for_ring_node(&Ring.remove_node(ring, &1))
+    |> then(&dispatch_telemetry_event(:nodes_removed, adapter_meta, %{nodes: &1}))
+  end
+
+  defp for_ring_node(nodes, action) do
+    Enum.reduce(nodes, [], fn node, acc ->
+      case action.(node) do
+        {:ok, _nodes} -> [node | acc]
+        {:error, _reason} -> acc
+      end
+    end)
+  end
+
+  defp node_names(pids_or_nodes) do
+    Enum.map(pids_or_nodes, fn
+      pid when is_pid(pid) -> node(pid)
+      node when is_atom(node) -> node
+    end)
   end
 end

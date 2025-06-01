@@ -21,7 +21,7 @@ defmodule Nebulex.Adapters.PartitionedCachexTest do
     node_pid_list =
       start_caches(
         [node() | Node.list()],
-        [{PartitionedCachex, [name: @cache_name, join_timeout: 2000]}]
+        [{PartitionedCachex, name: @cache_name}]
       )
 
     default_dynamic_cache = PartitionedCachex.get_dynamic_cache()

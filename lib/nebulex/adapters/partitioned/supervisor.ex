@@ -22,6 +22,7 @@ defmodule Nebulex.Adapters.Partitioned.Supervisor do
   def init({cache, adapter_meta, primary_opts, opts}) do
     children = [
       {cache.__primary__(), primary_opts},
+      {ExHashRing.Ring, adapter_meta.hash_ring},
       {Bootstraper, {Map.put(adapter_meta, :cache, cache), opts}}
     ]
 

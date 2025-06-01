@@ -26,33 +26,13 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       option. The options will vary depending on the adapter used.
       """
     ],
-    keyslot: [
-      type:
-        {:custom, Nebulex.Cache.Options, :__validate_behaviour__,
-         [Nebulex.Adapter.Keyslot, "the adapter"]},
-      type_doc: "`t:module/0`",
+    hash_ring: [
+      type: :keyword_list,
       required: false,
-      default: Nebulex.Adapters.Partitioned,
+      default: [],
       doc: """
-      The implementation module for the `Nebulex.Adapter.Keyslot` behaviour.
-      """
-    ],
-    join_timeout: [
-      type: :timeout,
-      required: false,
-      default: :timer.seconds(180),
-      doc: """
-      The interval time in milliseconds for the partitioned cache to attempt to
-      join the cluster. It works like a heartbeat to keep the cache joined to
-      the cluster.
-      """
-    ],
-    stats: [
-      type: :boolean,
-      required: false,
-      default: true,
-      doc: """
-      A flag to determine whether to collect cache stats.
+      Options for the hash ring. See `ExHashRing.Ring.start_link/2` for more
+      information.
       """
     ]
   ]

@@ -12,6 +12,10 @@
 - [Nebulex.Adapters.Partitioned] The adapter implements the new Nebulex v3 API.
 - [Nebulex.Adapters.Partitioned] The adapter supports the `:timeout` option from
   `Nebulex.Cache`.
+- [Nebulex.Adapters.Partitioned] The adapter uses `ExHashRing` for distributing
+  the keys across the cluster members.
+- [Nebulex.Adapters.Partitioned] he adapter supports the `:hash_ring` option to
+  configute `ExHashRing`.
 
 ### Backwards incompatible changes
 
@@ -19,6 +23,11 @@
   use the option `:inclusion_policy` instead.
 - [Nebulex.Adapters.Multilevel] The previous extended function `model/0,1` has
   been removed. Please use `inclusion_policy/0,1` instead.
+- [Nebulex.Adapters.Partitioned] The option `:keyslot` is no longer supported,
+  so the `Nebulex.Adapter.Keyslot` behaviour has been removed. The partitioned
+  adapter uses `ExHashRing` for key distribution under-the-hood.
+- [Nebulex.Adapters.Partitioned] The option `:join_timeout` is no longer
+  supported.
 - [Nebulex.Distributed.RPC] The usage of async tasks for the RPC calls has been
   removed (for OTP < 23). The new `Nebulex.Distributed.RPC` module uses `:erpc`.
 

@@ -3,6 +3,34 @@ defmodule Nebulex.Distributed.Cluster do
   # distributed caching functionality.
   @moduledoc false
 
+  import Nebulex.Utils, only: [wrap_error: 2]
+
+  alias ExHashRing.Ring
+
+  @doc """
+  Returns the `:pg` scope.
+  """
+  @spec pg_scope() :: atom()
+  def pg_scope, do: __MODULE__
+
+  @doc """
+  Returns the `:pg` child spec.
+  """
+  @spec pg_child_spec() :: Supervisor.child_spec()
+  def pg_child_spec do
+    %{id: :pg, start: {:pg, :start_link, [pg_scope()]}}
+  end
+
+  @doc """
+  Wrapper for `:pg.monitor_scope/1`.
+  """
+  @spec monitor_scope() :: reference()
+  def monitor_scope do
+    {pg_ref, _} = :pg.monitor_scope(pg_scope())
+
+    pg_ref
+  end
+
   @doc """
   Joins the node where the cache `name`'s supervisor process is running to the
   `name`'s node group.
@@ -30,77 +58,74 @@ defmodule Nebulex.Distributed.Cluster do
   @doc """
   Returns the list of nodes joined to given `name`'s node group.
   """
-  @spec get_nodes(name :: atom()) :: [node()]
-  def get_nodes(name) do
+  @spec pg_nodes(name :: atom()) :: [node()]
+  def pg_nodes(name) do
     name
     |> pg_members()
     |> Enum.map(&node/1)
-    |> :lists.usort()
+    |> Enum.uniq()
   end
 
   @doc """
-  Selects one node based on the computation of the `key` slot.
+  Returns the list of nodes in the ring.
   """
-  @spec get_node(name_or_nodes :: atom() | [node()], Nebulex.Cache.key(), keyslot :: module()) ::
-          node()
-  def get_node(name_or_nodes, key, keyslot)
+  @spec ring_nodes(Ring.ring()) :: [node()]
+  def ring_nodes(ring) do
+    {:ok, nodes} = Ring.get_nodes(ring)
 
-  def get_node(name, key, keyslot) when is_atom(name) do
-    name
-    |> get_nodes()
-    |> get_node(key, keyslot)
+    Enum.map(nodes, &to_node/1)
   end
 
-  def get_node(nodes, key, keyslot) when is_list(nodes) do
-    Enum.at(nodes, keyslot.hash_slot(key, length(nodes)))
+  @doc """
+  Finds a node in the ring.
+  """
+  @spec find_node(Ring.ring(), any()) :: {:ok, node()} | {:error, Nebulex.Error.t()}
+  def find_node(ring, key) do
+    case Ring.find_node(ring, :erlang.phash2(key)) do
+      {:ok, node} ->
+        {:ok, to_node(node)}
+
+      {:error, reason} ->
+        wrap_error Nebulex.Error,
+          module: __MODULE__,
+          reason: {:find_node_error, reason},
+          ring: ring,
+          key: key
+    end
+  end
+
+  ## Error formatting
+
+  @doc false
+  def format_error({:find_node_error, reason}, metadata) do
+    ring = Keyword.fetch!(metadata, :ring)
+    key = Keyword.fetch!(metadata, :key)
+
+    "Error finding node in ring #{inspect(ring)} for key #{inspect(key)}: #{inspect(reason)}"
   end
 
   ## PG
 
-  if Code.ensure_loaded?(:pg) do
-    defp pg_join(name, pid) do
-      :ok = :pg.join(__MODULE__, name, pid)
-    end
-
-    defp pg_leave(name, pid) do
-      _ = :pg.leave(__MODULE__, name, pid)
-
-      :ok
-    end
-
-    defp pg_members(name) do
-      :pg.get_members(__MODULE__, name)
-    end
-  else
-    # Inline common instructions
-    @compile {:inline, pg2_namespace: 1}
-
-    defp pg_join(name, pid) do
-      name
-      |> ensure_namespace()
-      |> :pg2.join(pid)
-    end
-
-    defp pg_leave(name, pid) do
-      name
-      |> ensure_namespace()
-      |> :pg2.leave(pid)
-    end
-
-    defp pg_members(name) do
-      name
-      |> ensure_namespace()
-      |> :pg2.get_members()
-    end
-
-    defp ensure_namespace(name) do
-      namespace = pg2_namespace(name)
-
-      :ok = :pg2.create(namespace)
-
-      namespace
-    end
-
-    defp pg2_namespace(name), do: {:nbx, name}
+  defp pg_join(name, pid) do
+    :ok = :pg.join(__MODULE__, name, pid)
   end
+
+  defp pg_leave(name, pid) do
+    _ = :pg.leave(__MODULE__, name, pid)
+
+    :ok
+  end
+
+  defp pg_members(name) do
+    :pg.get_members(__MODULE__, name)
+  end
+
+  ## Other helpers
+
+  # FIXME: This is a hack due to HashRing defines a node name as a binary.
+  defp to_node(node) when is_atom(node), do: node
+  # coveralls-ignore-start
+  # sobelow_skip ["DOS.StringToAtom"]
+  defp to_node(node) when is_binary(node), do: String.to_atom(node)
+  # coveralls-ignore-stop
 end
