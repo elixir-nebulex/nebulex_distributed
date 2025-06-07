@@ -15,13 +15,17 @@ cache topologies, but this feature will depend on the adapters. Here is where
 **"Nebulex Distributed"** comes in. It provides the following adapters to set up
 distributed topologies:
 
-  * `Nebulex.Adapters.Partitioned` - Partitioned cache topology.
-  * `Nebulex.Adapters.Multilevel` - Multi-level distributed cache topology.
+  * [`Nebulex.Adapters.Partitioned`][partitioned] - Partitioned cache topology.
+  * [`Nebulex.Adapters.Multilevel`][multilevel] - Multi-level or near cache
+    topology.
   * `Nebulex.Adapters.Replicated` - Replicated cache topology (**WIP!**).
 
 These adapters work more as wrappers for an existing local adapter and provide
 the distributed topology on top of it. You can optionally set the adapter for
 the primary cache storage with the option `:primary_storage_adapter`.
+
+[partitioned]: http://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Partitioned.html
+[multilevel]: http://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Multilevel.html
 
 ## Installation
 

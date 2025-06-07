@@ -5,9 +5,9 @@ defmodule Nebulex.Adapters.Partitioned do
   ## Features
 
     * Partitioned cache topology (Sharding Distribution Model).
-    * Configurable primary storage adapter.
     * `ExHashRing` for distributing the keys across the cluster members.
     * Support for transactions via Erlang global name registration facility.
+    * Configurable primary storage adapter.
 
   ## Partitioned Cache Topology
 
@@ -59,15 +59,34 @@ defmodule Nebulex.Adapters.Partitioned do
   `:pg` is used under-the-hood by the adapter to manage the cluster nodes.
   When the partitioned cache is started in a node, it creates a group and joins
   it (the cache supervisor PID is joined to the group). Then, when a function
-  is invoked, the adapter picks a node from the group members, and then the
-  function is executed on that specific node. In the same way, when a
-  partitioned cache supervisor dies (the cache is stopped or killed for some
-  reason), the PID of that process is automatically removed from the PG group;
-  this is why it's recommended to use consistent hashing for distributing the
-  keys across the cluster nodes.
+  is invoked, the adapter uses `ExHashRing` to determine which node should
+  handle the request based on the key's hash value. This ensures consistent
+  key distribution across the cluster nodes, even when nodes join or leave
+  the cluster.
+
+  The key distribution process works as follows:
+
+    1. Each node in the cluster is assigned a set of virtual nodes (vnodes) in
+      the hash ring.
+    2. When a key is accessed, `ExHashRing.Ring` is used to find the node
+      responsible for that key (the hash value is used to find the corresponding
+      vnode in the hash ring).
+    3. The request is routed to the physical node that owns that vnode.
+
+  This consistent hashing approach provides several benefits:
+
+    * Minimal key redistribution when nodes join or leave the cluster.
+    * Even distribution of keys across the cluster.
+    * Predictable key-to-node mapping.
+    * Efficient node lookup for key operations.
+
+  When a partitioned cache supervisor dies (the cache is stopped or killed for some
+  reason), the PID of that process is automatically removed from the PG group.
+  The hash ring is then automatically rebalanced to ensure keys are properly
+  distributed among the remaining nodes.
 
   This adapter depends on a local cache adapter (primary storage), it adds
-  a thin layer on top of it in order to distribute requests across a group
+  an extra layer on top of it in order to distribute requests across a group
   of nodes, where is supposed the local cache is running already. However,
   you don't need to define any additional cache module for the primary
   storage, instead, the adapter initializes it automatically (it adds the
@@ -502,7 +521,7 @@ defmodule Nebulex.Adapters.Partitioned do
     end
   end
 
-  def do_put_all(action, adapter_meta, entries, ttl, opts) do
+  defp do_put_all(action, adapter_meta, entries, ttl, opts) do
     timeout = Keyword.fetch!(opts, :timeout)
     opts = [ttl: ttl] ++ opts
 

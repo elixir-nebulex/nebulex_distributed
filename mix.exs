@@ -31,30 +31,11 @@ defmodule NebulexDistributed.MixProject do
 
       # Hex
       package: package(),
-      description: "A generational local cache adapter for Nebulex",
+      description: "Distributed cache topologies adapters for Nebulex",
 
       # Docs
       name: "Nebulex.Distributed",
       docs: docs()
-    ]
-  end
-
-  defp docs do
-    [
-      main: "Nebulex.Distributed",
-      source_ref: "v#{@version}",
-      source_url: @source_url,
-      canonical: "http://hexdocs.pm/nebulex_distributed",
-      groups_for_modules: [
-        Adapters: [
-          Nebulex.Adapters.Multilevel,
-          Nebulex.Adapters.Partitioned
-        ],
-        Utilities: [
-          Nebulex.Distributed.Cluster,
-          Nebulex.Distributed.RPC
-        ]
-      ]
     ]
   end
 
@@ -72,7 +53,7 @@ defmodule NebulexDistributed.MixProject do
     [
       nebulex_dep(),
       {:nebulex_local, "~> 3.0.0-rc.1"},
-      {:ex_hash_ring, "~> 7.0", override: true},
+      {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
       # Test & Code Analysis
@@ -98,7 +79,7 @@ defmodule NebulexDistributed.MixProject do
     if path = System.get_env("NEBULEX_PATH") do
       {:nebulex, path: path, override: true}
     else
-      {:nebulex, "~> #{@nbx_vsn}", override: true}
+      {:nebulex, "~> #{@nbx_vsn}"}
     end
   end
 
@@ -122,14 +103,32 @@ defmodule NebulexDistributed.MixProject do
 
   defp package do
     [
-      name: :nebulex_local,
+      name: :nebulex_distributed,
       maintainers: [
-        "Carlos Bolanos",
-        "Felipe Ripoll"
+        "Carlos Bolanos"
       ],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE*)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Nebulex.Distributed",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      canonical: "http://hexdocs.pm/nebulex_distributed",
+      groups_for_modules: [
+        Adapters: [
+          Nebulex.Adapters.Multilevel,
+          Nebulex.Adapters.Partitioned
+        ],
+        Utilities: [
+          Nebulex.Distributed.Cluster,
+          Nebulex.Distributed.RPC
+        ]
+      ]
     ]
   end
 
