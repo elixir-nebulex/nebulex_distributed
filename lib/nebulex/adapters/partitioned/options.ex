@@ -1,7 +1,5 @@
 defmodule Nebulex.Adapters.Partitioned.Options do
-  @moduledoc """
-  Option definitions for the partitioned adapter.
-  """
+  @moduledoc false
 
   # Compilation time options
   compile_opts = [
@@ -31,8 +29,10 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: [],
       doc: """
-      Options for the hash ring. See `ExHashRing.Ring.start_link/2` for more
-      information.
+      Options for the hash ring.
+      See [`ExHashRing.Ring.start_link/2`][ex_hash_ring] for more information.
+
+      [ex_hash_ring]: https://hexdocs.pm/ex_hash_ring/ExHashRing.Ring.html#start_link/1
       """
     ]
   ]

@@ -34,10 +34,26 @@ defmodule NebulexDistributed.MixProject do
       description: "A generational local cache adapter for Nebulex",
 
       # Docs
-      docs: [
-        main: "Nebulex.Distributed",
-        source_ref: "v#{@version}",
-        source_url: @source_url
+      name: "Nebulex.Distributed",
+      docs: docs()
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Nebulex.Distributed",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      canonical: "http://hexdocs.pm/nebulex_distributed",
+      groups_for_modules: [
+        Adapters: [
+          Nebulex.Adapters.Multilevel,
+          Nebulex.Adapters.Partitioned
+        ],
+        Utilities: [
+          Nebulex.Distributed.Cluster,
+          Nebulex.Distributed.RPC
+        ]
       ]
     ]
   end

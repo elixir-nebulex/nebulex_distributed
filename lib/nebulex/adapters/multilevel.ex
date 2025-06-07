@@ -229,7 +229,19 @@ defmodule Nebulex.Adapters.Multilevel do
         ]
       }
 
-  ## Caveats of multi-level adapter
+  ## Extended API
+
+  This adapter provides some additional convenience functions to the
+  `Nebulex.Cache` API.
+
+  ### `inclusion_policy/0,1`
+
+  Returns the inclusion policy of the cache.
+
+      iex> MyCache.inclusion_policy()
+      :inclusive
+
+  ## CAVEATS
 
   Because this adapter reuses other existing/configured adapters, it inherits
   all their limitations too. Therefore, it is highly recommended to check the

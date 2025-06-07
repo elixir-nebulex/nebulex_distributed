@@ -308,7 +308,7 @@ defmodule Nebulex.Adapters.Partitioned do
 
       MyCache.leave_cluster()
 
-  ## Caveats of partitioned adapter
+  ## CAVEATS
 
   For `c:Nebulex.Cache.get_and_update/3` and `c:Nebulex.Cache.update/4`,
   they both have a parameter that is the anonymous function, and it is compiled

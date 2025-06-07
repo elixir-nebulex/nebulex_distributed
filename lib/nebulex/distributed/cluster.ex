@@ -1,7 +1,7 @@
 defmodule Nebulex.Distributed.Cluster do
-  # The module used by cache adapters for
-  # distributed caching functionality.
-  @moduledoc false
+  @moduledoc """
+  This module is used by cache adapters for distributed caching functionality.
+  """
 
   import Nebulex.Utils, only: [wrap_error: 2]
 

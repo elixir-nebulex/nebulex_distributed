@@ -15,8 +15,8 @@ cache topologies, but this feature will depend on the adapters. Here is where
 **"Nebulex Distributed"** comes in. It provides the following adapters to set up
 distributed topologies:
 
-  * `Nebulex.Adapters.Multilevel` - Multi-level distributed cache topology.
   * `Nebulex.Adapters.Partitioned` - Partitioned cache topology.
+  * `Nebulex.Adapters.Multilevel` - Multi-level distributed cache topology.
   * `Nebulex.Adapters.Replicated` - Replicated cache topology (**WIP!**).
 
 These adapters work more as wrappers for an existing local adapter and provide
@@ -35,6 +35,10 @@ def deps do
   ]
 end
 ```
+
+See the [online documentation][online_docs] for more information.
+
+[online_docs]: http://hexdocs.pm/nebulex_distributed
 
 ## Partitioned cache topology example
 
@@ -135,10 +139,6 @@ def start(_type, _args) do
     ...
   ]
 ```
-
-See the [online documentation][online_docs] for more information.
-
-[online_docs]: http://hexdocs.pm/nebulex_distributed
 
 ## Testing
 

@@ -1,7 +1,5 @@
 defmodule Nebulex.Adapters.Multilevel.Options do
-  @moduledoc """
-  Option definitions for the multi-level adapter.
-  """
+  @moduledoc false
 
   # Start options
   start_opts = [

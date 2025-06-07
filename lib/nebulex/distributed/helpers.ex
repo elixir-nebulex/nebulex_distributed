@@ -1,7 +1,5 @@
 defmodule Nebulex.Distributed.Helpers do
-  @moduledoc """
-  General purpose helper functions.
-  """
+  @moduledoc false
 
   ## API
 
