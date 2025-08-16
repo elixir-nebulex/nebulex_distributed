@@ -37,6 +37,12 @@ defmodule Nebulex.Distributed.TestCache do
 
         @doc false
         def get_and_update_bad_fun(_), do: :other
+
+        @doc false
+        def fetch_or_store_fun, do: {:ok, "value"}
+
+        @doc false
+        def get_or_store_fun, do: "value"
       end
     end
   end

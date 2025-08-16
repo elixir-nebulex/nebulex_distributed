@@ -3,8 +3,8 @@ defmodule NebulexDistributed.MixProject do
 
   @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
   @version "3.0.0-rc.1"
-  @nbx_tag "3.0.0-rc.1"
-  @nbx_vsn "3.0.0-rc.1"
+  # @nbx_tag "3.0.0-rc.1"
+  # @nbx_vsn "3.0.0-rc.1"
 
   def project do
     [
@@ -79,7 +79,7 @@ defmodule NebulexDistributed.MixProject do
     if path = System.get_env("NEBULEX_PATH") do
       {:nebulex, path: path, override: true}
     else
-      {:nebulex, "~> #{@nbx_vsn}"}
+      {:nebulex, github: "elixir-nebulex/nebulex", override: true}
     end
   end
 
@@ -87,7 +87,7 @@ defmodule NebulexDistributed.MixProject do
     [
       "nbx.setup": [
         "cmd rm -rf nebulex",
-        "cmd git clone --depth 1 --branch v#{@nbx_tag} http://github.com/elixir-nebulex/nebulex"
+        "cmd git clone --depth 1 --branch main http://github.com/elixir-nebulex/nebulex"
       ],
       "test.ci": [
         "deps.unlock --check-unused",

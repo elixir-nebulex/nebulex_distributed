@@ -113,6 +113,18 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
         PartitionedCache.incr(:counter, 10)
       end
     end
+
+    test "fetch_or_store! stores the value in the cache if the key does not exist" do
+      assert PartitionedCache.fetch_or_store!("lazy", &PartitionedCache.fetch_or_store_fun/0) ==
+               "value"
+
+      assert PartitionedCache.get!("lazy") == "value"
+    end
+
+    test "get_or_store! stores the value in the cache if the key does not exist" do
+      assert PartitionedCache.get_or_store!("lazy", &PartitionedCache.get_or_store_fun/0) == "value"
+      assert PartitionedCache.get!("lazy") == "value"
+    end
   end
 
   describe "cluster scenario:" do

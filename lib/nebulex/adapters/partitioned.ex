@@ -327,13 +327,36 @@ defmodule Nebulex.Adapters.Partitioned do
 
       MyCache.leave_cluster()
 
-  ## CAVEATS
+  ## Caveats of partitioned adapter
 
-  For `c:Nebulex.Cache.get_and_update/3` and `c:Nebulex.Cache.update/4`,
-  they both have a parameter that is the anonymous function, and it is compiled
-  into the module where it is created, which means it necessarily doesn't exists
-  on remote nodes. To ensure they work as expected, you must provide functions
-  from modules existing in all nodes of the group.
+  For operations that receive anonymous functions as arguments, such as
+  `c:Nebulex.Cache.get_and_update/3`, `c:Nebulex.Cache.update/4`,
+  `c:Nebulex.Cache.fetch_or_store/2`, and `c:Nebulex.Cache.get_or_store/2`,
+  etc., there's an important consideration: these anonymous functions are
+  compiled into the module where they are created. Since the distributed adapter
+  executes operations on remote nodes, these functions may not exist on the
+  target nodes.
+
+  To ensure these operations work correctly in a distributed environment, you
+  must provide functions from modules that exist on all nodes in the cluster.
+  This can be achieved by:
+
+  * Using named functions from modules that are available across all nodes.
+  * Defining the functions in a shared module that's loaded on every node.
+  * Using function references that can be serialized and transmitted.
+
+  Example of the recommended approach:
+
+      # Instead of anonymous functions, use named functions from shared modules
+      defmodule MyApp.CacheHelpers do
+        def increment_value(current_value) do
+          (current_value || 0) + 1
+        end
+      end
+
+      # Use the named function in cache operations
+      MyCache.get_and_update("counter", &MyApp.CacheHelpers.increment_value/1)
+
   """
 
   # Provide Cache Implementation
