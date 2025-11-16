@@ -5,25 +5,25 @@ defmodule Nebulex.Adapters.Partitioned.Supervisor do
 
   import Nebulex.Utils
 
-  alias Nebulex.Adapters.Partitioned.Bootstraper
+  alias Nebulex.Adapters.Partitioned.RingMonitor
 
   ## API
 
   @doc false
-  def start_link({cache, name, adapter_meta, primary_opts, opts}) do
+  def start_link({cache, name, adapter_meta, primary_opts}) do
     name = camelize_and_concat([name, Supervisor])
 
-    Supervisor.start_link(__MODULE__, {cache, adapter_meta, primary_opts, opts}, name: name)
+    Supervisor.start_link(__MODULE__, {cache, adapter_meta, primary_opts}, name: name)
   end
 
   ## Supervisor callback
 
   @impl true
-  def init({cache, adapter_meta, primary_opts, opts}) do
+  def init({cache, adapter_meta, primary_opts}) do
     children = [
       {cache.__primary__(), primary_opts},
       {ExHashRing.Ring, adapter_meta.hash_ring},
-      {Bootstraper, {Map.put(adapter_meta, :cache, cache), opts}}
+      {RingMonitor, Map.put(adapter_meta, :cache, cache)}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)

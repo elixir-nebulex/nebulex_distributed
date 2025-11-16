@@ -17,14 +17,6 @@ defmodule NebulexDistributed.MixProject do
 
       # Testing
       test_coverage: [tool: ExCoveralls, export: "test-coverage"],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test,
-        "coveralls.json": :test,
-        "test.ci": :test
-      ],
 
       # Dialyzer
       dialyzer: dialyzer(),
@@ -36,6 +28,19 @@ defmodule NebulexDistributed.MixProject do
       # Docs
       name: "Nebulex.Distributed",
       docs: docs()
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.json": :test,
+        "test.ci": :test
+      ]
     ]
   end
 

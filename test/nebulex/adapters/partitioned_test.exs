@@ -33,8 +33,8 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       )
 
     assert_eventually fn ->
-      assert PartitionedCache.nodes() |> length == length(nodes)
-      assert PartitionedNilCache.nodes() |> length == length(nodes)
+      assert PartitionedCache.nodes() |> length() == length(nodes)
+      assert PartitionedNilCache.nodes() |> length() == length(nodes)
     end
 
     default_dynamic_cache = PartitionedCache.get_dynamic_cache()
@@ -151,7 +151,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
     end
 
     test "teardown cache node", %{cluster: cluster} do
-      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:bootstrap]
+      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:ring_monitor]
       nodes_removed = prefix ++ [:nodes_removed]
 
       with_telemetry_handler __MODULE__, [nodes_removed], fn ->
@@ -175,9 +175,9 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       assert PartitionedCache.get!(1) == 1
     end
 
-    test "bootstrap leaves cache from the cluster when terminated and then rejoins when restarted",
+    test "ring monitor leaves cache from the cluster when terminated and then rejoins when restarted",
          %{name: name} do
-      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:bootstrap]
+      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:ring_monitor]
       started = prefix ++ [:started]
       stopped = prefix ++ [:stopped]
       joined = prefix ++ [:joined]
@@ -192,7 +192,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
         assert node in nodes
 
         true =
-          [name, Bootstrap]
+          [name, RingMonitor]
           |> Utils.camelize_and_concat()
           |> Process.whereis()
           |> Process.exit(:stop)

@@ -5,7 +5,10 @@ defmodule Nebulex.Adapters.Partitioned do
   ## Features
 
     * Partitioned cache topology (Sharding Distribution Model).
-    * `ExHashRing` for distributing the keys across the cluster members.
+    * Consistent hashing via `ExHashRing` for distributing keys across cluster
+      nodes.
+    * Automatic cluster membership management using Erlang's `:pg`
+      (process groups).
     * Support for transactions via Erlang global name registration facility.
     * Configurable primary storage adapter.
 
@@ -54,44 +57,101 @@ defmodule Nebulex.Adapters.Partitioned do
 
   [oracle-pcs]: https://docs.oracle.com/cd/E13924_01/coh.340/e13819/partitionedcacheservice.htm
 
-  ## Additional implementation notes
+  ## Consistent Hashing and Key Distribution
 
-  `:pg` is used under-the-hood by the adapter to manage the cluster nodes.
-  When the partitioned cache is started in a node, it creates a group and joins
-  it (the cache supervisor PID is joined to the group). Then, when a function
-  is invoked, the adapter uses `ExHashRing` to determine which node should
-  handle the request based on the key's hash value. This ensures consistent
-  key distribution across the cluster nodes, even when nodes join or leave
-  the cluster.
+  The adapter uses `ExHashRing` to implement consistent hashing, which maps keys
+  to nodes in a way that minimizes data redistribution when the cluster topology
+  changes.
 
-  The key distribution process works as follows:
+  ### How key distribution works
 
-    1. Each node in the cluster is assigned a set of virtual nodes (vnodes) in
-      the hash ring.
-    2. When a key is accessed, `ExHashRing.Ring` is used to find the node
-      responsible for that key (the hash value is used to find the corresponding
-      vnode in the hash ring).
-    3. The request is routed to the physical node that owns that vnode.
+  The process is as follows:
 
-  This consistent hashing approach provides several benefits:
+    1. **Virtual Nodes (Vnodes)**: Each physical node in the cluster is assigned
+      a set of virtual nodes (vnodes) in the hash ring. This enables even
+      distribution of keys across the cluster.
 
-    * Minimal key redistribution when nodes join or leave the cluster.
-    * Even distribution of keys across the cluster.
-    * Predictable key-to-node mapping.
-    * Efficient node lookup for key operations.
+    2. **Key Hashing**: When a key is accessed, its hash value (computed using
+      `erlang:phash2/1`) is used to find the corresponding vnode in the ring.
 
-  When a partitioned cache supervisor dies (the cache is stopped or killed for some
-  reason), the PID of that process is automatically removed from the PG group.
-  The hash ring is then automatically rebalanced to ensure keys are properly
-  distributed among the remaining nodes.
+    3. **Node Lookup**: `ExHashRing.Ring` finds the node responsible for that
+      vnode, which becomes the target for the operation.
 
-  This adapter depends on a local cache adapter (primary storage), it adds
-  an extra layer on top of it in order to distribute requests across a group
-  of nodes, where is supposed the local cache is running already. However,
-  you don't need to define any additional cache module for the primary
-  storage, instead, the adapter initializes it automatically (it adds the
-  primary storage as part of the supervision tree) based on the given
-  `:primary_storage_adapter` option.
+    4. **RPC Routing**: The request is sent to the target node via RPC (remote
+      procedure call) to read or write the cached value.
+
+  ### Benefits of consistent hashing
+
+    * **Minimal Key Redistribution**: When nodes join or leave, only a fraction
+      of keys are redistributed to other nodes (proportional to the change in
+      cluster size).
+    * **Even Distribution**: Keys are evenly spread across all nodes in the
+      cluster.
+    * **Predictable Mapping**: The same key always maps to the same node,
+      ensuring cache hits across the cluster.
+    * **Efficient Lookup**: Hash ring lookups are O(log n) in terms of vnodes.
+
+  ## Cluster Membership Management
+
+  The adapter maintains a distributed view of the hash ring across all cluster
+  nodes using two key components:
+
+  ### Process Groups (`:pg`)
+
+  The adapter uses Erlang's built-in `:pg` (process groups) module to track
+  cluster membership. When a partitioned cache is started:
+
+    1. The cache supervisor PID is registered in a `:pg` group named after the
+      cache (e.g., the `:name` option or the cache module name).
+    2. All nodes with the same cache running join the same group.
+    3. When a node joins or leaves the cluster, `:pg` automatically notifies all
+      members subscribed to that group.
+
+  ### Ring Monitor
+
+  The `Nebulex.Adapters.Partitioned.RingMonitor` is a `GenServer` that:
+
+    1. **Subscribes to Cluster Changes**: Uses
+      `Nebulex.Distributed.Cluster.monitor_scope/0` to subscribe to all
+      `:pg` group changes via `:pg.monitor_scope/1`.
+
+    2. **Handles Join/Leave Events**: When nodes join or leave a group,
+      RingMonitor receives `{:join, group, pids}` and `{:leave, group, pids}`
+      messages and updates the `ExHashRing.Ring` state accordingly.
+
+    3. **Maintains Ring Consistency**: Keeps the hash ring in sync with the
+      current cluster topology by adding/removing nodes from the ring.
+
+  ### Handling Race Conditions During Startup
+
+  During initial cluster formation, multiple nodes may start simultaneously,
+  leading to race conditions where some nodes miss join events from others.
+  To solve this, the RingMonitor uses a **periodic rejoin mechanism**:
+
+    * **Rejoin Interval**: The `:rejoin_interval` option (default: 30 seconds)
+      specifies an interval at which the RingMonitor periodically rejoins
+      the `:pg` group.
+
+    * **Idempotent Joins**: Since `:pg` treats duplicate joins as idempotent, a
+      node can safely rejoin without negative side effects.
+
+    * **Forced Ring Updates**: Each periodic rejoin triggers `:join` events that
+      force all nodes to update their ring view, ensuring eventual consistency
+      even if some initial join events were missed.
+
+  This mechanism ensures that all nodes have a consistent view of the ring, even
+  in the face of concurrent startups or transient network issues.
+
+  ## Primary Storage Adapter
+
+  This adapter depends on a local cache adapter (primary storage), adding a
+  distributed layer on top of it. You don't need to manually define the primary
+  storage cache; the adapter initializes it automatically as part of the
+  supervision tree.
+
+  The `:primary_storage_adapter` option (defaults to `Nebulex.Adapters.Local`)
+  configures which adapter to use for the local storage on each node. Options
+  for the primary adapter can be specified via the `:primary` configuration option.
 
   ## Usage
 
@@ -187,10 +247,11 @@ defmodule Nebulex.Adapters.Partitioned do
 
   ## Adapter-specific telemetry events
 
-  This adapter exposes following Telemetry events:
+  The RingMonitor process emits the following Telemetry events during the
+  lifetime of the partitioned cache:
 
-    * `telemetry_prefix ++ [:bootstrap, :started]` - Dispatched by the adapter
-      when the bootstrap process is started.
+    * `telemetry_prefix ++ [:ring_monitor, :started]` - Dispatched when the
+      RingMonitor process starts.
 
       * Measurements: `%{system_time: non_neg_integer}`
       * Metadata:
@@ -198,12 +259,12 @@ defmodule Nebulex.Adapters.Partitioned do
         ```
         %{
           adapter_meta: %{optional(atom) => term},
-          cluster_nodes: [node]
+          node: atom
         }
         ```
 
-    * `telemetry_prefix ++ [:bootstrap, :stopped]` - Dispatched by the adapter
-      when the bootstrap process is stopped.
+    * `telemetry_prefix ++ [:ring_monitor, :joined]` - Dispatched when the
+      RingMonitor has successfully joined the `:pg` group to enter the cluster.
 
       * Measurements: `%{system_time: non_neg_integer}`
       * Metadata:
@@ -211,13 +272,54 @@ defmodule Nebulex.Adapters.Partitioned do
         ```
         %{
           adapter_meta: %{optional(atom) => term},
-          cluster_nodes: [node],
+          node: atom
+        }
+        ```
+
+    * `telemetry_prefix ++ [:ring_monitor, :nodes_added]` - Dispatched when
+      nodes are added to the hash ring.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          nodes: [atom]
+        }
+        ```
+
+    * `telemetry_prefix ++ [:ring_monitor, :nodes_removed]` - Dispatched when
+      nodes are removed from the hash ring.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          nodes: [atom]
+        }
+        ```
+
+    * `telemetry_prefix ++ [:ring_monitor, :exit]` - Dispatched when the
+      RingMonitor receives an EXIT signal.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
           reason: term
         }
         ```
 
-    * `telemetry_prefix ++ [:bootstrap, :exit]` - Dispatched by the adapter
-      when the bootstrap has received an exit signal.
+    * `telemetry_prefix ++ [:ring_monitor, :stopped]` - Dispatched when the
+      RingMonitor process terminates.
 
       * Measurements: `%{system_time: non_neg_integer}`
       * Metadata:
@@ -225,21 +327,8 @@ defmodule Nebulex.Adapters.Partitioned do
         ```
         %{
           adapter_meta: %{optional(atom) => term},
-          cluster_nodes: [node],
+          node: atom,
           reason: term
-        }
-        ```
-
-    * `telemetry_prefix ++ [:bootstrap, :joined]` - Dispatched by the adapter
-      when the bootstrap has joined the cache to the cluster.
-
-      * Measurements: `%{system_time: non_neg_integer}`
-      * Metadata:
-
-        ```
-        %{
-          adapter_meta: %{optional(atom) => term},
-          cluster_nodes: [node]
         }
         ```
 
@@ -331,7 +420,7 @@ defmodule Nebulex.Adapters.Partitioned do
 
   For operations that receive anonymous functions as arguments, such as
   `c:Nebulex.Cache.get_and_update/3`, `c:Nebulex.Cache.update/4`,
-  `c:Nebulex.Cache.fetch_or_store/2`, and `c:Nebulex.Cache.get_or_store/2`,
+  `c:Nebulex.Cache.fetch_or_store/3`, and `c:Nebulex.Cache.get_or_store/3`,
   etc., there's an important consideration: these anonymous functions are
   compiled into the module where they are created. Since the distributed adapter
   executes operations on remote nodes, these functions may not exist on the
@@ -411,8 +500,7 @@ defmodule Nebulex.Adapters.Partitioned do
       """
       def nodes(name \\ get_dynamic_cache()) do
         name
-        |> lookup_meta()
-        |> get_in([:hash_ring, :name])
+        |> get_ring_name()
         |> Cluster.ring_nodes()
       end
 
@@ -421,8 +509,7 @@ defmodule Nebulex.Adapters.Partitioned do
       """
       def find_node(name \\ get_dynamic_cache(), key) do
         name
-        |> lookup_meta()
-        |> get_in([:hash_ring, :name])
+        |> get_ring_name()
         |> Cluster.find_node(key)
       end
 
@@ -440,14 +527,27 @@ defmodule Nebulex.Adapters.Partitioned do
       A convenience function for joining the cache to the cluster.
       """
       def join_cluster(name \\ get_dynamic_cache()) do
-        Cluster.join(name)
+        name
+        |> get_ring_name()
+        |> Cluster.join()
       end
 
       @doc """
       A convenience function for removing the cache from the cluster.
       """
       def leave_cluster(name \\ get_dynamic_cache()) do
-        Cluster.leave(name)
+        name
+        |> get_ring_name()
+        |> Cluster.leave()
+      end
+
+      @doc """
+      A convenience function for getting the ring name.
+      """
+      def get_ring_name(name) do
+        name
+        |> lookup_meta()
+        |> get_in([:hash_ring, :name])
       end
     end
   end
@@ -482,7 +582,7 @@ defmodule Nebulex.Adapters.Partitioned do
     hash_ring =
       opts
       |> Keyword.fetch!(:hash_ring)
-      |> Keyword.put_new_lazy(:name, fn -> camelize_and_concat([name, Ring]) end)
+      |> Keyword.put(:name, camelize_and_concat([name, Ring]))
 
     # Prepare metadata
     adapter_meta = %{
@@ -490,13 +590,14 @@ defmodule Nebulex.Adapters.Partitioned do
       telemetry: telemetry,
       name: name,
       primary_name: primary_opts[:name],
-      hash_ring: hash_ring
+      hash_ring: hash_ring,
+      rejoin_interval: Keyword.fetch!(opts, :rejoin_interval)
     }
 
     # Prepare child spec
     child_spec =
       Supervisor.child_spec(
-        {Nebulex.Adapters.Partitioned.Supervisor, {cache, name, adapter_meta, primary_opts, opts}},
+        {Nebulex.Adapters.Partitioned.Supervisor, {cache, name, adapter_meta, primary_opts}},
         id: {__MODULE__, name}
       )
 

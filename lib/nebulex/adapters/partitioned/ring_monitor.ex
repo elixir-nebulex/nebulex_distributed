@@ -1,5 +1,9 @@
-defmodule Nebulex.Adapters.Partitioned.Bootstraper do
-  @moduledoc false
+defmodule Nebulex.Adapters.Partitioned.RingMonitor do
+  @moduledoc """
+  This module is responsible for monitoring the cluster and keeping the hash
+  ring in sync with the current cluster topology.
+  """
+
   use GenServer
 
   import Nebulex.Utils
@@ -9,46 +13,47 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
   alias Nebulex.Telemetry
 
   # State
-  defstruct [:adapter_meta, :ring, :pg_ref]
+  defstruct adapter_meta: nil, ring: nil, pg_ref: nil, rejoin_interval: nil
 
   ## API
 
   @doc false
-  def start_link({%{name: name}, _} = state) do
-    GenServer.start_link(
-      __MODULE__,
-      state,
-      name: camelize_and_concat([name, Bootstrap])
-    )
+  def start_link(%{name: name} = adapter_meta) do
+    GenServer.start_link(__MODULE__, adapter_meta, name: camelize_and_concat([name, RingMonitor]))
   end
 
   ## GenServer Callbacks
 
   @impl true
-  def init({adapter_meta, _opts}) do
+  def init(%{hash_ring: hash_ring, rejoin_interval: rejoin_interval} = adapter_meta) do
     # Trap exit signals to run cleanup job
     _ = Process.flag(:trap_exit, true)
 
-    # Bootstrap started
+    # Get the ring name
+    ring = Keyword.fetch!(hash_ring, :name)
+
+    # Ring monitor started
     :ok = dispatch_telemetry_event(:started, adapter_meta)
 
-    # Subscribe the bootstraper to updates from the cluster
+    # Subscribe the ring monitor to updates from the cluster
     pg_ref = Cluster.monitor_scope()
 
-    # Ensure joining the cluster when the cache supervision tree is started
-    :ok = Cluster.join(adapter_meta.name)
-
-    # Bootstrap joined the cache to the cluster
-    :ok = dispatch_telemetry_event(:joined, adapter_meta)
-
     # Build initial state
-    state = build_state(adapter_meta, pg_ref)
+    state = %__MODULE__{
+      adapter_meta: adapter_meta,
+      ring: ring,
+      pg_ref: pg_ref,
+      rejoin_interval: rejoin_interval
+    }
 
-    # Set up the ring
-    :ok = add_ring_nodes(state.ring, [node()], state.adapter_meta)
+    # Ensure joining the cluster when the cache supervision tree is started
+    :ok = join(state)
 
-    # Start bootstrap process
-    {:ok, state}
+    # Add the current node to the ring
+    :ok = add_ring_nodes(ring, [node()], adapter_meta)
+
+    # Return initial state with rejoin interval
+    {:ok, state, rejoin_interval}
   end
 
   @impl true
@@ -56,7 +61,7 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
 
   # Handle EXIT signals
   def handle_info({:EXIT, _from, reason}, %__MODULE__{adapter_meta: adapter_meta} = state) do
-    # Bootstrap received exit signal
+    # Ring monitor received exit signal
     :ok = dispatch_telemetry_event(:exit, adapter_meta, %{reason: reason})
 
     {:stop, reason, state}
@@ -64,8 +69,8 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
 
   # PG join event
   def handle_info(
-        {pg_ref, :join, group, pids},
-        %__MODULE__{pg_ref: pg_ref, adapter_meta: %{name: group} = adapter_meta, ring: ring} = state
+        {pg_ref, :join, ring, pids},
+        %__MODULE__{pg_ref: pg_ref, adapter_meta: adapter_meta, ring: ring} = state
       ) do
     :ok = add_ring_nodes(ring, pids, adapter_meta)
 
@@ -74,54 +79,56 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
 
   # PG leave event
   def handle_info(
-        {pg_ref, :leave, group, pids},
-        %__MODULE__{pg_ref: pg_ref, adapter_meta: %{name: group} = adapter_meta, ring: ring} = state
+        {pg_ref, :leave, ring, pids},
+        %__MODULE__{pg_ref: pg_ref, adapter_meta: adapter_meta, ring: ring} = state
       ) do
     :ok = rem_ring_nodes(ring, pids, adapter_meta)
 
     {:noreply, state}
   end
 
-  # Ignore
+  # Rejoin interval timeout
+  def handle_info(:timeout, %__MODULE__{rejoin_interval: rejoin_interval} = state) do
+    # Join the PG group
+    :ok = join(state)
+
+    {:noreply, state, rejoin_interval}
+  end
+
+  # Ignore other messages
   def handle_info(_info, state) do
     {:noreply, state}
   end
 
   @impl true
-  def terminate(reason, %__MODULE__{adapter_meta: adapter_meta}) do
+  def terminate(reason, %__MODULE__{ring: ring, adapter_meta: adapter_meta}) do
     # Ensure leaving the cluster when the cache stops
-    :ok = Cluster.leave(adapter_meta.name)
+    :ok = Cluster.leave(ring)
 
-    # Bootstrap stopped or terminated
+    # Ring monitor stopped or terminated
     :ok = dispatch_telemetry_event(:stopped, adapter_meta, %{reason: reason})
   end
 
   ## Private Functions
 
-  # Inline common instructions
-  @compile {:inline, node_names: 1}
-
-  defp build_state(%{hash_ring: hash_ring} = adapter_meta, pg_ref) do
-    %__MODULE__{
-      adapter_meta: adapter_meta,
-      ring: Keyword.fetch!(hash_ring, :name),
-      pg_ref: pg_ref
-    }
-  end
-
   defp dispatch_telemetry_event(event, adapter_meta, meta \\ %{}) do
     Telemetry.execute(
-      adapter_meta.telemetry_prefix ++ [:bootstrap, event],
+      adapter_meta.telemetry_prefix ++ [:ring_monitor, event],
       %{system_time: System.system_time()},
-      Map.merge(meta, %{
-        adapter_meta: adapter_meta,
-        node: node()
-      })
+      Map.merge(meta, %{adapter_meta: adapter_meta, node: node()})
     )
   end
 
-  defp add_ring_nodes(ring, pids, %{name: name} = adapter_meta) do
-    name
+  defp join(%__MODULE__{ring: ring, adapter_meta: adapter_meta}) do
+    # Join the PG group
+    :ok = Cluster.join(ring)
+
+    # Ring monitor joined the cache to the cluster
+    :ok = dispatch_telemetry_event(:joined, adapter_meta)
+  end
+
+  defp add_ring_nodes(ring, pids, adapter_meta) do
+    ring
     |> Cluster.pg_nodes()
     |> MapSet.new()
     |> MapSet.difference(ring |> Cluster.ring_nodes() |> MapSet.new())
@@ -131,11 +138,11 @@ defmodule Nebulex.Adapters.Partitioned.Bootstraper do
     |> then(&dispatch_telemetry_event(:nodes_added, adapter_meta, %{nodes: &1}))
   end
 
-  defp rem_ring_nodes(ring, pids, %{name: name} = adapter_meta) do
+  defp rem_ring_nodes(ring, pids, adapter_meta) do
     ring
     |> Cluster.ring_nodes()
     |> MapSet.new()
-    |> MapSet.difference(name |> Cluster.pg_nodes() |> MapSet.new())
+    |> MapSet.difference(ring |> Cluster.pg_nodes() |> MapSet.new())
     |> MapSet.union(pids |> node_names() |> MapSet.new())
     |> MapSet.to_list()
     |> for_ring_node(&Ring.remove_node(ring, &1))

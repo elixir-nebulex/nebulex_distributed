@@ -8,7 +8,13 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: Nebulex.Adapters.Local,
       doc: """
-      The adapter for the primary storage.
+      The adapter module used for the primary (local) storage on each cluster
+      node. The partitioned adapter is a distributed wrapper that routes
+      requests to the appropriate node based on consistent hashing. The actual
+      data storage is handled by the primary storage adapter on each node.
+      This option allows you to choose which adapter to use for this local
+      storage. The configuration for the primary adapter is specified via the
+      `:primary` start option.
       """
     ]
   ]
@@ -20,8 +26,10 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: [],
       doc: """
-      Options for the adapter configured via the `:primary_storage_adapter`
-      option. The options will vary depending on the adapter used.
+      Configuration options passed to the primary storage adapter specified via
+      `:primary_storage_adapter`. The available options depend on which adapter
+      you choose. Refer to the documentation of your chosen primary storage
+      adapter for the complete list of supported options.
       """
     ],
     hash_ring: [
@@ -29,10 +37,48 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: [],
       doc: """
-      Options for the hash ring.
-      See [`ExHashRing.Ring.start_link/2`][ex_hash_ring] for more information.
+      Configuration options for the consistent hash ring used to distribute keys
+      across cluster nodes. The hash ring maps each key to a node using virtual
+      nodes (vnodes), which enables:
+
+        * Minimal key redistribution when nodes join or leave.
+        * Even distribution of keys across nodes.
+        * Efficient node lookup for cache operations.
+
+      See [`ExHashRing.Ring.start_link/2`][ex_hash_ring] for the complete list
+      of supported options.
 
       [ex_hash_ring]: https://hexdocs.pm/ex_hash_ring/ExHashRing.Ring.html#start_link/1
+      """
+    ],
+    rejoin_interval: [
+      type: :timeout,
+      required: false,
+      default: :timer.seconds(30),
+      doc: """
+      The interval in **milliseconds** at which the `RingMonitor` periodically
+      rejoins the `:pg` group to force ring synchronization across all cluster
+      nodes.
+
+      **Purpose:** This mechanism helps handle race conditions during concurrent
+      node startups by ensuring all nodes eventually have a consistent view of
+      the hash ring. Even if some join events are missed during initial cluster
+      formation, each rejoin triggers new notifications that force ring updates.
+
+      **Trade-offs:**
+
+        * **Shorter intervals** (e.g., 10 seconds):
+          - Faster consistency convergence.
+          - More overhead from frequent rejoin events and notifications.
+          - Better for highly dynamic clusters with frequent node changes.
+
+        * **Longer intervals** (e.g., 60 seconds):
+          - Lower overhead and reduced network traffic.
+          - Slower eventual consistency.
+          - Fine for stable clusters that don't change frequently.
+
+      **Default (30 seconds):** Works well for most use cases, balancing
+      consistency and overhead.
       """
     ]
   ]
@@ -44,8 +90,15 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: 5000,
       doc: """
-      The time in **milliseconds** to wait for a command to finish
-      (`:infinity` to wait indefinitely).
+      The time in **milliseconds** to wait for a cache command to finish.
+
+      This timeout applies to RPC calls made to remote nodes during partitioned
+      cache operations. Since the partitioned adapter routes requests across
+      cluster nodes, network latency and node load affect execution time.
+
+      Set to `:infinity` to wait indefinitely. If a timeout occurs, the
+      operation fails with an error. Note that the underlying cache operation
+      may still complete on the remote node asynchronously.
       """
     ]
   ]
@@ -58,15 +111,27 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       required: false,
       default: :raise,
       doc: """
-      Indicates whether to raise an exception when an error occurs or do nothing
-      (skip errors).
+      Controls error handling during stream evaluation across cluster nodes.
 
-      When the stream is evaluated, the adapter attempts to execute the `stream`
-      command on the different nodes. Still, the execution could fail due to an
-      RPC error or the command explicitly returns an error. If the option is set
-      to `:raise`, the command will raise an exception when an error occurs on
-      the stream evaluation. On the other hand, if it is set to `:nothing`, the
-      error is skipped.
+      When streaming entries from a partitioned cache, the adapter evaluates the
+      stream on each cluster node. Since this involves RPC calls to remote
+      nodes, failures can occur due to:
+
+        * Network issues or RPC timeouts.
+        * Errors on the remote node.
+        * Temporary node unavailability.
+
+      **Options:**
+
+        * `:raise` (default) - Raise an exception immediately when an error
+          occurs on any node. The stream evaluation stops, and no further nodes
+          are queried.
+
+        * `:nothing` - Skip errors silently and continue. Returns only
+          successful results from nodes that responded without errors.
+          Useful for resilience in environments where temporary node
+          failures are acceptable.
+
       """
     ]
   ]
