@@ -1,6 +1,6 @@
 defmodule Nebulex.Adapters.Multilevel do
   @moduledoc """
-  Adapter module for the multi-level cache topogy.
+  Adapter module for the multi-level cache topology.
 
   The Multi-level adapter is a simple layer that works on top of a local or
   distributed cache implementation, enabling a cache hierarchy by levels.
@@ -14,7 +14,171 @@ defmodule Nebulex.Adapters.Multilevel do
   this policy ensures that the data is stored safely as it is written
   throughout the hierarchy. However, it is possible to force the write
   operation in a specific level (although it is not recommended) via
-  `level` option, where the value is a positive integer greater than 0.
+  `:level` option, where the value is a positive integer greater than 0.
+
+  ## How Multi-Level Caches Work
+
+  A multi-level cache is organized in a hierarchy of cache layers, where each
+  layer is typically faster but smaller than the next. The most common pattern
+  is a **near-cache topology** with two levels:
+
+    * **L1 (Level 1)**: Local cache - Fast, in-process, limited size. Examples:
+      `Nebulex.Adapters.Local`.
+    * **L2 (Level 2)**: Distributed/remote cache - Slower, shared across nodes,
+      larger capacity. Examples: `Nebulex.Adapters.Partitioned`, Redis, etc.
+
+  Multi-level caches provide **performance improvement** by reducing latency
+  for frequently accessed data (served from L1) while maintaining large capacity
+  through the L2 layer.
+
+  ### Cache Lookup (Read Operations)
+
+  When you perform a **read operation** (e.g., `get`, `fetch`), the adapter
+  checks the cache levels in order (L1 → L2 → L3, etc.) and returns the value
+  from the **first level that contains it**:
+
+    1. Check L1 (fast, local cache).
+    2. If found → Return immediately.
+    3. If not found → Check L2.
+    4. If found in L2 → Return and replicate to L1 (if inclusive mode).
+    5. If not found → Check L3, L4, etc.
+    6. If not found in any level → Return error or miss.
+
+  This **single-hop lookup** pattern ensures you always get data from the
+  fastest available level while maintaining a fallback to slower (but larger)
+  levels.
+
+  **Example:**
+  - Request for key "user:123"
+  - L1 miss (not in local cache)
+  - L2 hit (found in distributed cache)
+  - Value returned to client
+  - In inclusive mode: value is replicated back to L1 for future requests
+
+  ### Write-Through Policy
+
+  The multi-level adapter uses a **Write-Through** policy for write operations.
+  This means data is written to **all levels synchronously** before returning
+  to the caller:
+
+    1. Write to L1 (local cache).
+    2. Write to L2 (distributed cache).
+    3. Write to L3, L4, etc. (if any)
+    4. Return to caller.
+
+  This ensures:
+
+    * **Consistency**: Data is immediately available in all levels.
+    * **Safety**: Data survives L1 failures (protected in L2).
+    * **Simplicity**: No complex cache invalidation logic needed.
+
+  **Trade-off**: Write operations are **slower** because they must complete on
+  all levels before returning. However, this is typically acceptable when:
+    - Read operations are usually more frequent.
+    - Distributed writes are less latency-sensitive than reads.
+    - Consistency guarantees are worth the cost.
+
+  **Failure Handling**: If a write fails at any level, the operation stops
+  (fail-fast). Partially written data at earlier levels is **not rolled back**
+  (atomic writes are not guaranteed across levels).
+
+  ### Replication in Inclusive Mode
+
+  When using the **`:inclusive` policy** (default), data can exist in multiple
+  levels simultaneously. The adapter automatically **replicates data backward**
+  (from slower to faster levels) during reads:
+
+    * **Inclusive mode**: Same key can exist in L1, L2, and L3 simultaneously.
+    * **Exclusive mode**: Same key can exist in only one level at a time.
+
+  #### Inclusive Mode Workflow
+
+    1. **Read (inclusive mode)**:
+       - Check L1, L2, L3 in order.
+       - If found in L2 (not in L1) → Replicate to L1.
+       - Future requests hit L1 (faster).
+
+    2. **Write (inclusive mode)**:
+       - Write to L1, L2, L3 (all levels).
+       - Future reads hit L1 (fastest).
+
+    3. **Eviction (inclusive mode)**:
+       - L1 evicts a key (e.g., due to size limit).
+       - Key still exists in L2.
+       - Next read finds it in L2 and replicates it back to L1.
+
+  #### Exclusive Mode Workflow
+
+    1. **Read (exclusive mode)**:
+       - Find key in L2.
+       - Return value (do NOT replicate to L1).
+
+    2. **Write (exclusive mode)**:
+       - Write to L1, L2, L3 (write-through still applies).
+       - Data exists in all levels.
+
+    3. **Eviction (exclusive mode)**:
+       - L1 evicts a key.
+       - L2 still has it.
+       - Next read must go to L2 (no replication).
+
+  #### Choosing the Right Mode
+
+    * **Inclusive (default)**: Good for hot-spot data patterns.
+      - Pro: Faster subsequent reads (hot data stays in L1).
+      - Con: More memory usage (duplicated in multiple levels).
+      - Con: `get_all` is slower (requires per-entry replication).
+
+    * **Exclusive**: Good for large data sets or strict memory limits.
+      - Pro: Less memory usage (data exists once).
+      - Con: Slower reads after eviction (must fetch from L2).
+      - Con: More complex consistency management.
+
+  ### TTL (Time-To-Live) Handling
+
+  TTL values are **per-level and independent**:
+
+    * Each level has its own TTL for the same key.
+    * When writing with TTL, the same TTL is applied to all levels.
+    * Each level independently expires the entry.
+    * In inclusive mode: If L1 expires but L2 still has it, next read
+      replicates from L2 back to L1 with remaining TTL.
+
+  #### Why TTL is Per-Level
+
+  Each cache level uses a **different adapter with its own eviction policy**.
+  For example:
+
+    * **L1 (`Nebulex.Adapters.Local`)**: TTL is evaluated **on-demand** during
+      reads and via a **garbage collector** that periodically removes expired
+      entries and creates new generations. Behavior is controlled by
+      `gc_interval` option.
+
+    * **L2 (`Nebulex.Adapters.Partitioned` or Redis)**: TTL is handled by the
+      underlying distributed cache. Redis, for example, uses its own TTL
+      expiration mechanism which may differ from the local adapter's approach.
+
+  Because each adapter manages TTL differently, the **expiration timing and
+  behavior can vary significantly across levels**:
+
+    - L1 may expire entries within seconds (controlled by GC interval).
+    - L2 may expire entries at slightly different times (depends on Redis TTL).
+    - A key can exist in L2 but be expired in L1.
+    - The remaining TTL is automatically synchronized when data is replicated
+      during reads.
+
+  This independence is **intentional and necessary** because:
+    - Different adapters have different TTL mechanisms.
+    - Forcing synchronized TTL across levels would require complex coordination.
+    - Allowing independent TTL gives each adapter control over its eviction.
+    - The cost is acceptable because reads automatically sync TTL through
+      replication.
+
+  This means:
+    - Data can be available in L2 even after L1 expires it.
+    - Evictions are independent per level and controlled by each adapter.
+    - TTL synchronization happens automatically during reads
+      (in inclusive mode).
 
   We can define a multi-level cache as follows:
 
@@ -44,14 +208,12 @@ defmodule Nebulex.Adapters.Multilevel do
         levels: [
           {
             MyApp.Multilevel.L1,
-            gc_interval: :timer.hours(12),
-            backend: :shards
+            gc_interval: :timer.hours(12)
           },
           {
             MyApp.Multilevel.L2,
             primary: [
-              gc_interval: :timer.hours(12),
-              backend: :shards
+              gc_interval: :timer.hours(12)
             ]
           }
         ]
@@ -93,46 +255,74 @@ defmodule Nebulex.Adapters.Multilevel do
 
   ## Telemetry events
 
-  Since the multi-level adapter works as a wrapper for the configured cache
-  levels, these will emit the Nebulex Telemetry events. Therefore, there will
-  be events emitted for each cache level. For example, the cache defined before
-  `MyApp.Multilevel` will emit the following events:
+  The multi-level adapter emits Telemetry events for itself and for each
+  configured cache level. By default, each level gets a unique telemetry
+  prefix derived from its module name, making events naturally distinguishable.
 
-    * Top level cache:
-      * `[:my_app, :multilevel, :command, :start]`
-      * `[:my_app, :multilevel, :command, :stop]`
-      * `[:my_app, :multilevel, :command, :exception]`
+  ### Default Behavior
 
-    * L1 cache:
-      * `[:my_app, :multilevel, :command, :start]`
-      * `[:my_app, :multilevel, :command, :stop]`
-      * `[:my_app, :multilevel, :command, :exception]`
+  Each cache level is a separate module (e.g., `MyApp.Multilevel.L1`,
+  `MyApp.Multilevel.L2`), so each gets a unique telemetry prefix by default:
 
-    * L2 cache:
-      * `[:my_app, :multilevel, :command, :start]`
-      * `[:my_app, :multilevel, :primary, :command, :start]`
-      * `[:my_app, :multilevel, :command, :stop]`
-      * `[:my_app, :multilevel, :primary, :command, :stop]`
-      * `[:my_app, :multilevel, :command, :exception]`
-      * `[:my_app, :multilevel, :primary, :command, :exception]`
+      defmodule MyApp.Multilevel do
+        use Nebulex.Cache,
+          otp_app: :my_app,
+          adapter: Nebulex.Adapters.Multilevel
 
-  As you may notice, the telemetry prefix by default for all cache levels is
-  `[:my_app, :multilevel]`, but you can get the details about the cache from
-  the metadata. Alternatively, you could specify the `:telemetry_prefix` for
-  each cache level within the `:levels` option. For example:
+        defmodule L1 do
+          use Nebulex.Cache,
+            otp_app: :my_app,
+            adapter: Nebulex.Adapters.Local
+        end
+
+        defmodule L2 do
+          use Nebulex.Cache,
+            otp_app: :my_app,
+            adapter: Nebulex.Adapters.Partitioned
+        end
+      end
+
+  With this setup, events are naturally separated by module:
+
+    * Multilevel adapter: `[:my_app, :multilevel, :command, :start]`
+    * L1 cache (Local): `[:my_app, :multilevel, :l1, :command, :start]`
+    * L2 cache (Partitioned): `[:my_app, :multilevel, :l2, :command, :start]`
+    * L2 primary storage: `[:my_app, :multilevel, :l2, :primary, :command, :start]`
+
+  This default behavior is already good for distinguishing events based on
+  which cache level emitted them.
+
+  ### Custom Telemetry Prefixes (Optional)
+
+  If you want to override the default prefix for a level, use the optional
+  `:telemetry_prefix` option:
 
       config :my_app, MyApp.Multilevel,
         levels: [
-          {MyApp.Multilevel.L1, telemetry_prefix: [:my_app, :multilevel, :l1]},
-          {MyApp.Multilevel.L2, telemetry_prefix: [:my_app, :multilevel, :l2]}
+          {MyApp.Multilevel.L1, telemetry_prefix: [:my_app, :cache, :l1]},
+          {MyApp.Multilevel.L2, telemetry_prefix: [:my_app, :cache, :l2]}
         ]
 
-  In this case, the telemetry prefix for the L1 cache will be
-  `[:my_app, :multilevel, :l1]` and the L2 cache will be
-  `[:my_app, :multilevel, :l2]`.
+  This is useful if you want:
+    * A different naming convention for your telemetry events.
+    * To aggregate events from multiple caches under a common prefix.
+    * To match an existing telemetry structure in your application.
 
-  See also the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
-  for more information.
+  ### Events for Distributed L2 Adapters
+
+  If L2 uses a distributed adapter like `Nebulex.Adapters.Partitioned`, you
+  also get events from its primary storage:
+
+      MyApp.Multilevel.get(key)
+      # Emits (with default prefixes):
+      #   [:my_app, :multilevel, :command, :start]        # Multilevel wrapper
+      #   [:my_app, :multilevel, :l1, :command, :start]   # L1
+      #   [:my_app, :multilevel, :l2, :command, :start]   # L2 wrapper
+      #   [:my_app, :multilevel, :l2, :primary, :command, :start]  # L2 primary
+
+  Refer to the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
+  for complete information on Nebulex Telemetry events and how to attach
+  handlers.
 
   ## Info API
 
@@ -240,6 +430,58 @@ defmodule Nebulex.Adapters.Multilevel do
 
       iex> MyCache.inclusion_policy()
       :inclusive
+
+  ## Near cache topology example
+
+  The multi-level adapter can be used to implement a **near-cache topology**
+  with different types of cache backends. The most common pattern is L1 (local,
+  fast) + L2 (distributed, larger capacity).
+
+  ### L1 (Local) + L2 (Redis or External Cache)
+
+  Instead of using `Nebulex.Adapters.Partitioned` for L2, you can use any
+  external cache system via its adapter. For example, with Redis:
+
+      defmodule MyApp.NearCache do
+        use Nebulex.Cache,
+          otp_app: :my_app,
+          adapter: Nebulex.Adapters.Multilevel
+
+        defmodule L1 do
+          use Nebulex.Cache,
+            otp_app: :my_app,
+            adapter: Nebulex.Adapters.Local
+        end
+
+        defmodule L2 do
+          use Nebulex.Cache,
+            otp_app: :my_app,
+            adapter: Nebulex.Adapters.Redis
+        end
+      end
+
+  Configuration:
+
+      config :my_app, MyApp.NearCache,
+        levels: [
+          {MyApp.NearCache.L1, gc_interval: :timer.hours(1), max_size: 10_000},
+          {MyApp.NearCache.L2, conn_opts: [host: "localhost", port: 6379]}
+        ]
+
+  This topology provides:
+
+    * **L1 (Local)**: In-process cache with fast micro-second latency.
+    * **L2 (Redis)**: Shared across nodes, larger capacity, multi-millisecond
+      latency.
+
+  **Benefits:**
+    - Hot data is served from L1 (very fast).
+    - Cold data fetches from Redis L2, then cached in L1 on next access.
+    - Data survives node restarts (in Redis).
+    - Works across multiple nodes with a shared Redis instance.
+
+  **Use case**: Web applications where you want blazing-fast L1 performance for
+  frequently accessed data while using Redis for distributed, shared storage.
 
   ## CAVEATS
 

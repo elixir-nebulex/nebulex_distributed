@@ -1,5 +1,34 @@
 # Changelog
 
+## [v3.0.0-rc.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.2) (2025-11-30)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.1...v3.0.0-rc.2)
+
+### Enhancements
+
+- [Nebulex.Adapters.Partitioned] Improved documentation with comprehensive
+  sections on consistent hashing, key distribution, and cluster membership
+  management.
+- [Nebulex.Adapters.Multilevel] Added comprehensive "How Multi-Level Caches Work"
+  section covering cache lookup, write-through policy, replication modes, and
+  TTL handling. Additionally, a "Near cache topology example" section with
+  practical L1 (Local) + L2 (Redis) configuration and usage was added.
+- [Nebulex.Adapters.Multilevel.Options] Improved documentation for the supported
+  options.
+
+### Backwards incompatible changes
+
+- [Nebulex.Adapters.Partitioned] The `Nebulex.Adapters.Partitioned.Bootstraper`
+  module has been renamed to `Nebulex.Adapters.Partitioned.RingMonitor` to
+  better reflect its monitoring responsibilities.
+- [Nebulex.Adapters.Partitioned.Options] The `:join_timeout` option has been
+  renamed to `:rejoin_interval` for clarity. It represents the periodic interval
+  at which the ring monitor rejoins the cluster group to force ring
+  synchronization.
+
+### Fixed
+
+- Fixed typo in README.md ("GtiHub" → "GitHub").
+
 ## [v3.0.0-rc.1](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.1) (2025-06-07)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/2c6188ebb9a482cd75a97b6abdb2feddcfb189c9...v3.0.0-rc.1)
 

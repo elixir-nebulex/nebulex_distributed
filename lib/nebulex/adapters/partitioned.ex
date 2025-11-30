@@ -186,8 +186,10 @@ defmodule Nebulex.Adapters.Partitioned do
 
       config :my_app, MyApp.PartitionedCache,
         primary: [
-          gc_interval: 3_600_000,
-          backend: :shards
+          gc_interval: :timer.hours(12),
+          gc_memory_check_interval: :timer.seconds(10),
+          max_size: 1_000_000,
+          allocated_memory: 2_000_000_000
         ]
 
   If your application was generated with a supervisor (by passing `--sup`

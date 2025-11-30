@@ -44,106 +44,6 @@ See the [online documentation][online_docs] for more information.
 
 [online_docs]: http://hexdocs.pm/nebulex_distributed
 
-## Partitioned cache topology example
-
-You can define a partitioned cache as follows:
-
-```elixir
-defmodule MyApp.PartitionedCache do
-  use Nebulex.Cache,
-    otp_app: :my_app,
-    adapter: Nebulex.Adapters.Partitioned
-end
-```
-
-Where the configuration for the cache must be in your application
-environment, usually defined in your `config/config.exs`:
-
-```elixir
-config :my_app, MyApp.PartitionedCache,
-  primary: [
-    gc_interval: :timer.hours(12),
-    gc_memory_check_interval: :timer.seconds(10),
-    max_size: 1_000_000,
-    allocated_memory: 2_000_000_000
-  ]
-```
-
-If your application was generated with a supervisor (by passing `--sup`
-to `mix new`) you will have a `lib/my_app/application.ex` file containing
-the application start callback that defines and starts your supervisor.
-You just need to edit the `start/2` function to start the cache as a
-supervisor on your application's supervisor:
-
-```elixir
-def start(_type, _args) do
-  children = [
-    {MyApp.PartitionedCache, []},
-  ]
-
-  ...
-end
-```
-
-## Near cache topology example
-
-To set up a near cache, you use the multilevel adapter, like so:
-
-```elixir
-defmodule MyApp.Multilevel do
-  use Nebulex.Cache,
-    otp_app: :nebulex,
-    adapter: Nebulex.Adapters.Multilevel
-
-  defmodule L1 do
-    use Nebulex.Cache,
-      otp_app: :nebulex,
-      adapter: Nebulex.Adapters.Local
-  end
-
-  defmodule L2 do
-    use Nebulex.Cache,
-      otp_app: :nebulex,
-      adapter: Nebulex.Adapters.Partitioned
-  end
-end
-```
-
-Where the configuration for the cache and its levels must be in your
-application environment, usually defined in your `config/config.exs`:
-
-```elixir
-config :my_app, MyApp.Multilevel,
-  levels: [
-    {
-      MyApp.Multilevel.L1,
-      gc_interval: :timer.hours(12),
-      backend: :shards
-    },
-    {
-      MyApp.Multilevel.L2,
-      primary: [
-        gc_interval: :timer.hours(12),
-        backend: :shards
-      ]
-    }
-  ]
-```
-
-If your application was generated with a supervisor (by passing `--sup`
-to `mix new`) you will have a `lib/my_app/application.ex` file containing
-the application start callback that defines and starts your supervisor.
-You just need to edit the `start/2` function to start the cache as a
-supervisor on your application's supervisor:
-
-```elixir
-def start(_type, _args) do
-  children = [
-    {MyApp.Multilevel, []},
-    ...
-  ]
-```
-
 ## Testing
 
 Since this adapter uses support modules and shared tests from `Nebulex`,
@@ -157,7 +57,7 @@ to `nebulex`:
 export NEBULEX_PATH=nebulex
 ```
 
-Second, make sure you fetch `:nebulex` dependency directly from GtiHub
+Second, make sure you fetch `:nebulex` dependency directly from GitHub
 by running:
 
 ```

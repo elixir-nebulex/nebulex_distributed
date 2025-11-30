@@ -18,7 +18,6 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
   import Nebulex.CacheCase
   import Nebulex.Utils, only: [wrap_error: 2]
 
-  alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{Multilevel, MultilevelNil}
   alias Nebulex.Distributed.TestCache.Multilevel.{L1, L2, L3}
 
@@ -434,7 +433,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
 
   describe "distributed levels" do
     test "return cluster nodes" do
-      assert Cluster.pg_nodes(:multilevel_inclusive_l3) == [node()]
+      assert L3.nodes(:multilevel_inclusive_l3) == [node()]
     end
 
     test "joining new node" do
@@ -448,7 +447,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
         )
 
       # check cluster nodes
-      assert Cluster.pg_nodes(:multilevel_inclusive_l3) == [node, node()]
+      assert L3.nodes(:multilevel_inclusive_l3) == [node, node()]
 
       kv_pairs = for k <- 1..100, do: {k, k}
 

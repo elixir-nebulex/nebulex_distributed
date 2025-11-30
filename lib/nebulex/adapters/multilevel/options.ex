@@ -8,22 +8,41 @@ defmodule Nebulex.Adapters.Multilevel.Options do
       required: false,
       default: true,
       doc: """
-      A flag to determine whether to collect cache stats.
+      Enables or disables cache statistics collection (default: enabled).
+
+      When enabled, collects hit/miss/write statistics available via the
+      `info()` command. Statistics are collected per-level and aggregated at
+      the multi-level cache level. See the ["Info API"](#module-info-api)
+      section for details on how to access cache statistics.
       """
     ],
     levels: [
       type: :non_empty_keyword_list,
       required: true,
       doc: """
-      This option is to define the levels, a list of tuples in the shape
-      `{cache_level :: Nebulex.Cache.t(), opts :: keyword()}`, where the first
-      element is the module that defines the cache for that level, and the
-      second one is the options given to that level in the `start_link/1`.
-      The multi-level cache adapter relies on the list order to determine the
-      level hierarchy. For example, the first element in the list will be the
-      L1 cache (level 1), and so on; the Nth element will be the LN cache.
-      This option is required; if it is not set or empty, the adapter raises
-      an exception.
+      Defines the cache hierarchy as a non-empty keyword list of cache levels.
+
+      Each element must be a tuple of `{cache_module, opts}` where:
+
+        * `cache_module` - The cache module to use for this level
+          (e.g., `MyApp.Multilevel.L1`, `MyApp.Multilevel.L2`).
+        * `opts` - Keyword list of options passed to that cache's
+          `start_link/1`.
+
+      **Level Ordering**: The order of elements determines the hierarchy:
+        - First element = L1 (fastest, checked first)
+        - Second element = L2 (slower, larger capacity)
+        - Nth element = LN (slowest, largest capacity)
+
+      **Example:**
+
+          levels: [
+            {MyApp.Multilevel.L1, gc_interval: :timer.hours(12)},
+            {MyApp.Multilevel.L2, primary: [gc_interval: :timer.hours(12)]}
+          ]
+
+      This option is **required**. If not set or empty, the adapter raises an
+      exception. Each level must be a different cache module instance.
       """
     ],
     inclusion_policy: [
@@ -31,19 +50,23 @@ defmodule Nebulex.Adapters.Multilevel.Options do
       required: false,
       default: :inclusive,
       doc: """
-      Specifies the cache inclusion policy: `:inclusive` or `:exclusive`.
+      Specifies whether the same data can exist in multiple cache levels
+      simultaneously (default: inclusive).
 
-      For an "inclusive" cache, the same data can be present in all cache
-      levels. On the other hand, in an "exclusive" cache, the data can be
-      present in only one cache level; the key cannot exist in the rest of the
-      levels at the same time. This option applies to the callback `get` only;
-      if the cache inclusion policy is `:inclusive`, when the key does exist in a level
-      N, that entry is duplicated backward (to all previous levels: 1..N-1).
-      However, when the mode is `:inclusive`, the `get_all` operation is
-      translated into multiple `get` calls underneath (which may be a
-      significant performance penalty) since it requires replicating the entries
-      properly with their current TTLs. It is possible to skip the replication
-      when calling `get_all` using the option `:replicate`.
+      `:inclusive` - Same key can exist in L1, L2, L3, etc. simultaneously.
+      On read, if found in L2 but not L1, automatically replicate back to L1
+      for faster future reads. Trade-off: Uses more memory (data duplicated
+      in multiple levels). The `get_all` operation is slower because each entry
+      requires per-entry replication. Use the `:replicate` option to skip
+      replication if needed.
+
+      `:exclusive` - Same key can exist in only one level at a time. On read,
+      return value WITHOUT replicating to L1. Trade-off: Reads after L1
+      eviction must fetch from slower levels. Good for large datasets or
+      strict memory constraints.
+
+      See the ["How Multi-Level Caches Work"](#module-how-multi-level-caches-work)
+      section for detailed examples and workflow diagrams.
       """
     ]
   ]
@@ -55,16 +78,27 @@ defmodule Nebulex.Adapters.Multilevel.Options do
       required: false,
       default: 5000,
       doc: """
-      The time in **milliseconds** to wait for a command to finish
-      (`:infinity` to wait indefinitely).
+      The time in milliseconds to wait for a command to complete. Set to
+      `:infinity` to wait indefinitely.
+
+      **Note**: The timeout applies to each level independently.
       """
     ],
     level: [
       type: :pos_integer,
       required: false,
       doc: """
-      Dictates the level where the cache command will take place. The evaluation
-      is performed by default throughout the cache hierarchy (all levels).
+      An integer greater than 0 that specifies the cache level to execute the
+      operation on.
+
+      > #### WARNING {: .warning}
+      >
+      > Using this option **breaks the multi-level cache semantics**
+      > and is **not recommended** for normal operations. It's primarily useful
+      > for:
+      > - Debugging and testing.
+      > - Administrative tasks.
+      > - Advanced use cases where you need direct level access.
       """
     ]
   ]
@@ -76,9 +110,22 @@ defmodule Nebulex.Adapters.Multilevel.Options do
       required: false,
       default: true,
       doc: """
-      This option applies only to the `get_all` callback when using the
-      inclusive policy. Determines whether the entries should be replicated
-      to the backward levels or not.
+      Controls whether entries are replicated backward during `get_all`
+      operations (default: replicate).
+
+      Applies only to `get_all` when using `:inclusive` inclusion policy.
+
+      When enabled, entries found in L2 are automatically replicated back to L1
+      for faster future reads. Trade-off: Each entry requires a replication
+      operation. When disabled, entries are returned without replicating to L1,
+      which is faster for bulk reads where replication is unnecessary.
+
+      Example - Fast bulk read without L1 replication:
+
+          MyCache.get_all(:user_ids, replicate: false)
+
+      This only affects `get_all`. Regular `get` always respects the inclusion
+      policy. Ignored when using `:exclusive` policy (no replication occurs).
       """
     ],
     on_error: [
@@ -87,14 +134,19 @@ defmodule Nebulex.Adapters.Multilevel.Options do
       required: false,
       default: :raise,
       doc: """
-      Indicates whether to raise an exception when an error occurs or do nothing
-      (skip errors).
+      Controls error handling during queryable operations (`get_all`,
+      `count_all`, `delete_all`, `stream`).
 
-      When the stream is evaluated, the adapter attempts to execute the `stream`
-      command on the different cache levels. Still, the execution could fail at
-      any of the cache levels. If the option is set to `:raise`, the command
-      will raise an exception when an error occurs on the stream evaluation.
-      On the other hand, if it is set to `:nothing`, the error is skipped.
+      `:raise` - Raise an exception if any error occurs on any level. Fail-fast
+      with no partial results. Use for correctness-critical operations where you
+      need guarantee of success or explicit failure.
+
+      `:nothing` - Skip errors silently and continue processing. Returns partial
+      results from levels that succeeded. Use for large bulk reads, analytics,
+      or best-effort operations where partial results are acceptable.
+
+      Errors can occur from network issues (RPC timeout), level failures,
+      unavailability, or data corruption.
       """
     ]
   ]
