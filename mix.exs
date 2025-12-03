@@ -72,11 +72,11 @@ defmodule NebulexDistributed.MixProject do
       {:nebulex_adapters_cachex, "~> 3.0.0-rc.1", only: :test},
 
       # Benchmark Test
-      {:benchee, "~> 1.4", only: [:dev, :test]},
+      {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
       # Docs
-      {:ex_doc, "~> 0.38", only: [:dev, :test], runtime: false}
+      {:ex_doc, "~> 0.39", only: [:dev, :test], runtime: false}
     ]
   end
 

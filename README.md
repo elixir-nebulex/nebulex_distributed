@@ -122,4 +122,4 @@ all checks run successfully.
 
 Copyright (c) 2024 Carlos Andres Bolaños R.A.
 
-`nebulex_distributed` source code is licensed under the [MIT License](LICENSE).
+`nebulex_distributed` source code is licensed under the [MIT License](LICENSE.md).

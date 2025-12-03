@@ -13,7 +13,7 @@ defmodule Nebulex.Adapters.Partitioned.RingMonitor do
   alias Nebulex.Telemetry
 
   # State
-  defstruct adapter_meta: nil, ring: nil, pg_ref: nil, rejoin_interval: nil
+  defstruct adapter_meta: nil, ring: nil, pg_ref: nil, rejoin_interval: nil, rejoin_timer_ref: nil
 
   ## API
 
@@ -52,8 +52,13 @@ defmodule Nebulex.Adapters.Partitioned.RingMonitor do
     # Add the current node to the ring
     :ok = add_ring_nodes(ring, [node()], adapter_meta)
 
-    # Return initial state with rejoin interval
-    {:ok, state, rejoin_interval}
+    # Return initial state and continue with setting up the rejoin timer
+    {:ok, state, {:continue, :setup_rejoin_timer}}
+  end
+
+  @impl true
+  def handle_continue(:setup_rejoin_timer, state) do
+    {:noreply, refresh_rejoin_timer(state)}
   end
 
   @impl true
@@ -88,11 +93,11 @@ defmodule Nebulex.Adapters.Partitioned.RingMonitor do
   end
 
   # Rejoin interval timeout
-  def handle_info(:timeout, %__MODULE__{rejoin_interval: rejoin_interval} = state) do
+  def handle_info(:rejoin, %__MODULE__{} = state) do
     # Join the PG group
     :ok = join(state)
 
-    {:noreply, state, rejoin_interval}
+    {:noreply, refresh_rejoin_timer(state)}
   end
 
   # Ignore other messages
@@ -163,5 +168,18 @@ defmodule Nebulex.Adapters.Partitioned.RingMonitor do
       pid when is_pid(pid) -> node(pid)
       node when is_atom(node) -> node
     end)
+  end
+
+  defp refresh_rejoin_timer(
+         %__MODULE__{rejoin_timer_ref: rejoin_timer_ref, rejoin_interval: rejoin_interval} = state
+       ) do
+    _ignore =
+      if rejoin_timer_ref do
+        Process.cancel_timer(rejoin_timer_ref)
+      end
+
+    rejoin_timer_ref = Process.send_after(self(), :rejoin, rejoin_interval)
+
+    %{state | rejoin_timer_ref: rejoin_timer_ref}
   end
 end

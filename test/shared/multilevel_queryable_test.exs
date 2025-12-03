@@ -100,7 +100,7 @@ defmodule Nebulex.MultilevelQueryableTest do
         Enum.each(1..2, fn _ ->
           entries = cache_put(cache, 1..50)
 
-          assert cache.get_all!() |> :lists.usort() |> length() == length(entries)
+          assert cache.get_all!() |> :lists.usort() |> Enum.count() == Enum.count(entries)
 
           cached = cache.count_all!()
           assert cache.delete_all!() == cached
@@ -125,13 +125,13 @@ defmodule Nebulex.MultilevelQueryableTest do
         for x <- 1..100, do: cache.put(x, x)
 
         # total = keys per level * 3 levels
-        total = cache.get_all!() |> length() |> Kernel.*(3)
+        total = cache.get_all!() |> Enum.count() |> Kernel.*(3)
 
         assert cache.count_all!() == total
 
         for x <- 1..50, do: cache.delete!(x)
 
-        total = cache.get_all!() |> length() |> Kernel.*(3)
+        total = cache.get_all!() |> Enum.count() |> Kernel.*(3)
         assert cache.count_all!() == total
 
         for x <- 51..60, do: assert(cache.fetch!(x) == x)

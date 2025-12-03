@@ -19,6 +19,8 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   @primary :"primary@127.0.0.1"
   @cache_name :partitioned_cache
 
+  @telemetry_prefix Telemetry.default_prefix(PartitionedCache) ++ [:ring_monitor]
+
   setup do
     cluster = :lists.usort([@primary | Application.get_env(:nebulex_distributed, :nodes, [])])
     nodes = [node() | Node.list()]
@@ -27,14 +29,14 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       start_caches(
         nodes,
         [
-          {PartitionedCache, name: @cache_name},
+          {PartitionedCache, name: @cache_name, rejoin_interval: 100},
           {PartitionedNilCache, []}
         ]
       )
 
     assert_eventually fn ->
-      assert PartitionedCache.nodes() |> length() == length(nodes)
-      assert PartitionedNilCache.nodes() |> length() == length(nodes)
+      assert PartitionedCache.nodes() |> Enum.count() == Enum.count(nodes)
+      assert PartitionedNilCache.nodes() |> Enum.count() == Enum.count(nodes)
     end
 
     default_dynamic_cache = PartitionedCache.get_dynamic_cache()
@@ -53,6 +55,14 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   end
 
   describe "ring" do
+    test "test rejoin interval", %{name: name} do
+      joined = @telemetry_prefix ++ [:joined]
+
+      with_telemetry_handler __MODULE__, [joined], fn ->
+        assert_receive {^joined, %{system_time: _}, %{adapter_meta: %{name: ^name}}}, 5000
+      end
+    end
+
     test "error: find_node" do
       ExHashRing.Ring
       |> expect(:find_node, 2, fn _, _ -> {:error, :not_found} end)
@@ -151,8 +161,7 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
     end
 
     test "teardown cache node", %{cluster: cluster} do
-      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:ring_monitor]
-      nodes_removed = prefix ++ [:nodes_removed]
+      nodes_removed = @telemetry_prefix ++ [:nodes_removed]
 
       with_telemetry_handler __MODULE__, [nodes_removed], fn ->
         assert PartitionedCache.nodes() |> Enum.sort() == cluster |> Enum.sort()
@@ -177,12 +186,11 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     test "ring monitor leaves cache from the cluster when terminated and then rejoins when restarted",
          %{name: name} do
-      prefix = Telemetry.default_prefix(PartitionedCache) ++ [:ring_monitor]
-      started = prefix ++ [:started]
-      stopped = prefix ++ [:stopped]
-      joined = prefix ++ [:joined]
-      nodes_added = prefix ++ [:nodes_added]
-      exit_sig = prefix ++ [:exit]
+      started = @telemetry_prefix ++ [:started]
+      stopped = @telemetry_prefix ++ [:stopped]
+      joined = @telemetry_prefix ++ [:joined]
+      nodes_added = @telemetry_prefix ++ [:nodes_added]
+      exit_sig = @telemetry_prefix ++ [:exit]
       events = [started, stopped, joined, nodes_added, exit_sig]
 
       node = node()
