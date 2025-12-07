@@ -57,16 +57,6 @@ defmodule Nebulex.Distributed.TestCache do
     use Commons
   end
 
-  defmodule PartitionedCachex do
-    @moduledoc false
-    use Nebulex.Cache,
-      otp_app: :nebulex_distributed,
-      adapter: Nebulex.Adapters.Partitioned,
-      adapter_opts: [primary_storage_adapter: Nebulex.Adapters.Cachex]
-
-    use Commons
-  end
-
   defmodule PartitionedNilCache do
     @moduledoc false
     use Nebulex.Cache,
@@ -127,37 +117,6 @@ defmodule Nebulex.Distributed.TestCache do
       use Nebulex.Cache,
         otp_app: :nebulex_distributed,
         adapter: Nebulex.Adapters.Nil
-    end
-  end
-
-  defmodule MultilevelCachex do
-    @moduledoc false
-    use Nebulex.Cache,
-      otp_app: :nebulex_distributed,
-      adapter: Nebulex.Adapters.Multilevel
-
-    use Commons
-
-    defmodule L1 do
-      @moduledoc false
-      use Nebulex.Cache,
-        otp_app: :nebulex_distributed,
-        adapter: Nebulex.Adapters.Cachex
-    end
-
-    defmodule L2 do
-      @moduledoc false
-      use Nebulex.Cache,
-        otp_app: :nebulex_distributed,
-        adapter: Nebulex.Adapters.Cachex
-    end
-
-    defmodule L3 do
-      @moduledoc false
-      use Nebulex.Cache,
-        otp_app: :nebulex_distributed,
-        adapter: Nebulex.Adapters.Partitioned,
-        adapter_opts: [primary_storage_adapter: Nebulex.Adapters.Cachex]
     end
   end
 end

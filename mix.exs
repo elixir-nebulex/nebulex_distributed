@@ -2,9 +2,7 @@ defmodule NebulexDistributed.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
-  @version "3.0.0-rc.1"
-  # @nbx_tag "3.0.0-rc.1"
-  # @nbx_vsn "3.0.0-rc.1"
+  @version "3.0.0-rc.2"
 
   def project do
     [
@@ -57,7 +55,7 @@ defmodule NebulexDistributed.MixProject do
   defp deps do
     [
       nebulex_dep(),
-      {:nebulex_local, "~> 3.0.0-rc.1"},
+      {:nebulex_local, "~> #{@version}"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
@@ -69,7 +67,6 @@ defmodule NebulexDistributed.MixProject do
       {:stream_data, "~> 1.2", only: [:dev, :test]},
       {:mimic, "~> 1.11", only: :test},
       {:ex2ms, "~> 1.7", only: :test},
-      {:nebulex_adapters_cachex, "~> 3.0.0-rc.1", only: :test},
 
       # Benchmark Test
       {:benchee, "~> 1.5", only: [:dev, :test]},
@@ -84,7 +81,7 @@ defmodule NebulexDistributed.MixProject do
     if path = System.get_env("NEBULEX_PATH") do
       {:nebulex, path: path, override: true}
     else
-      {:nebulex, github: "elixir-nebulex/nebulex", override: true}
+      {:nebulex, "~> #{@version}"}
     end
   end
 
@@ -92,7 +89,7 @@ defmodule NebulexDistributed.MixProject do
     [
       "nbx.setup": [
         "cmd rm -rf nebulex",
-        "cmd git clone --depth 1 --branch main http://github.com/elixir-nebulex/nebulex"
+        "cmd git clone --depth 1 --branch main https://github.com/elixir-nebulex/nebulex"
       ],
       "test.ci": [
         "deps.unlock --check-unused",

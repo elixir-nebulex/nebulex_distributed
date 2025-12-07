@@ -35,10 +35,14 @@ the primary cache storage with the option `:primary_storage_adapter`.
 ```elixir
 def deps do
   [
-    {:nebulex_distributed, "~> 3.0.0-rc.1"}
+    {:nebulex_distributed, "~> 3.0.0-rc.2"},
+    {:telemetry, "~> 0.4 or ~> 1.0"}    # For observability/telemetry support
   ]
 end
 ```
+
+The `:telemetry` dependency is optional but highly recommended for observability
+and monitoring cache operations.
 
 See the [online documentation][online_docs] for more information.
 

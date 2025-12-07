@@ -1,6 +1,6 @@
 # Changelog
 
-## [v3.0.0-rc.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.2) (2025-11-30)
+## [v3.0.0-rc.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.2) (2025-12-07)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.1...v3.0.0-rc.2)
 
 ### Enhancements
