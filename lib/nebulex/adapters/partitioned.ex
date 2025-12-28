@@ -9,7 +9,9 @@ defmodule Nebulex.Adapters.Partitioned do
       nodes.
     * Automatic cluster membership management using Erlang's `:pg`
       (process groups).
-    * Support for transactions via Erlang global name registration facility.
+    * Support for distributed transactions via `Nebulex.Distributed.Transaction`,
+      using Erlang's `:global` module for cluster-wide lock coordination. See
+      `Nebulex.Distributed.Transaction` for transaction options and examples.
     * Configurable primary storage adapter.
 
   ## Partitioned Cache Topology
@@ -418,6 +420,48 @@ defmodule Nebulex.Adapters.Partitioned do
 
       MyCache.leave_cluster()
 
+  ## Transactions
+
+  The partitioned adapter supports distributed transactions via
+  `Nebulex.Distributed.Transaction`, which uses Erlang's `:global` module for
+  cluster-wide lock coordination.
+
+  **Automatic Cluster Coordination**: Transactions automatically coordinate
+  locks across all nodes in the partitioned cache cluster. The adapter
+  internally determines which nodes participate in the cluster (via hash ring)
+  and ensures locks are acquired across all of them.
+
+  **Example**:
+
+      # Transaction with fine-grained locking (recommended)
+      MyCache.transaction(fn ->
+        # Lock is coordinated across all cluster nodes
+        counter = MyCache.get!(:counter, default: 0)
+        MyCache.put!(:counter, counter + 1)
+      end, keys: [:counter])
+
+      # Multi-key transaction
+      MyCache.transaction(fn ->
+        alice = MyCache.get!(:alice)
+        bob = MyCache.get!(:bob)
+
+        MyCache.put!(:alice, %{alice | balance: alice.balance - 100})
+        MyCache.put!(:bob, %{bob | balance: bob.balance + 100})
+      end, keys: [:alice, :bob])
+
+  **Important**: Always specify the `:keys` option to enable fine-grained
+  locking and allow concurrent transactions on different keys. Without keys,
+  a global lock is used, which serializes all transactions across the entire
+  cluster and severely impacts performance.
+
+  **Cross-Partition Transactions**: When keys hash to different partitions
+  (nodes), the transaction still works correctly by acquiring locks across all
+  relevant nodes. However, keep in mind that cross-partition transactions are
+  more expensive due to the distributed coordination overhead.
+
+  See `Nebulex.Distributed.Transaction` for more information about transaction
+  options, behavior, retry policies, and performance considerations.
+
   ## Caveats of partitioned adapter
 
   For operations that receive anonymous functions as arguments, such as
@@ -455,8 +499,8 @@ defmodule Nebulex.Adapters.Partitioned do
   @behaviour Nebulex.Adapter.KV
   @behaviour Nebulex.Adapter.Queryable
 
-  # Inherit default transaction implementation
-  use Nebulex.Adapter.Transaction
+  # Inherit distributed transaction implementation using `:global`
+  use Nebulex.Distributed.Transaction
 
   # Inherit default info implementation
   use Nebulex.Adapters.Common.Info

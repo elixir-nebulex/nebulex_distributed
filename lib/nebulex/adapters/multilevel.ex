@@ -483,6 +483,34 @@ defmodule Nebulex.Adapters.Multilevel do
   **Use case**: Web applications where you want blazing-fast L1 performance for
   frequently accessed data while using Redis for distributed, shared storage.
 
+  ## Transactions
+
+  The multilevel adapter supports distributed transactions via
+  `Nebulex.Distributed.Transaction`, which uses Erlang's `:global` module for
+  cluster-wide lock coordination.
+
+  **Automatic Node Detection**: When using transactions with multilevel caches,
+  the adapter automatically detects distributed levels (e.g., partitioned or
+  replicated caches) and ensures locks are acquired across all relevant cluster
+  nodes. This means you don't need to manually specify nodes when using
+  distributed levels.
+
+  **Example**:
+
+      # Multilevel cache with local L1 and partitioned L2
+      MyApp.Multilevel.transaction(fn ->
+        # Locks are automatically set across all partitioned cache nodes
+        counter = MyApp.Multilevel.get!(:counter, default: 0)
+        MyApp.Multilevel.put!(:counter, counter + 1)
+      end, keys: [:counter])
+
+  **Recommendation**: Always specify the `:keys` option to enable fine-grained
+  locking and maximize concurrency. Without keys, a global lock is used which
+  serializes all transactions.
+
+  See `Nebulex.Distributed.Transaction` for more information about transaction
+  options, behavior, and performance considerations.
+
   ## CAVEATS
 
   Because this adapter reuses other existing/configured adapters, it inherits
@@ -496,8 +524,8 @@ defmodule Nebulex.Adapters.Multilevel do
   @behaviour Nebulex.Adapter.Queryable
   @behaviour Nebulex.Adapter.Info
 
-  # Inherit default transaction implementation
-  use Nebulex.Adapter.Transaction
+  # Inherit distributed transaction implementation using `:global`
+  use Nebulex.Distributed.Transaction
 
   # Inherit default observable implementation
   use Nebulex.Adapter.Observable

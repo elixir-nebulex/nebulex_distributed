@@ -10,6 +10,7 @@ defmodule Nebulex.Adapters.MultilevelExclusiveTest do
     ]
 
   use Nebulex.DistributedTest
+  use Nebulex.Distributed.TransactionTest
   use Nebulex.MultilevelTest
   use Nebulex.MultilevelQueryableTest
   use Nebulex.MultilevelInfoTest

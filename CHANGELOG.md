@@ -1,5 +1,27 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [v3.0.0-rc.3](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.3) (2025-12-28)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.2...v3.0.0-rc.3)
+
+### Enhancements
+
+- [Nebulex.Distributed.Transaction] Implemented adapter-specific transaction
+  support using `Nebulex.Distributed.Transaction`, which provides a distributed
+  locking implementation based on Erlang's `:global` module. This module is now
+  the canonical implementation for distributed transactions across
+  `Nebulex.Adapters.Partitioned` and `Nebulex.Adapters.Multilevel` adapters.
+  The implementation provides cluster-wide lock coordination with automatic node
+  discovery for partitioned and multilevel cache topologies. This change aligns
+  with the removal of the default transaction implementation from Nebulex core,
+  allowing distributed adapters to provide transaction implementations optimized
+  for multi-node scenarios. Both adapters automatically coordinate locks across
+  all cluster nodes without requiring manual `:nodes` configuration.
+  [#5](https://github.com/elixir-nebulex/nebulex_distributed/issues/5).
+
 ## [v3.0.0-rc.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.2) (2025-12-07)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.1...v3.0.0-rc.2)
 

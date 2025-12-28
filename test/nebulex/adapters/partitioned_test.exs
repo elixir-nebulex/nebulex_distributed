@@ -7,12 +7,13 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
   use Nebulex.DistributedTest
   use Nebulex.DistributedInfoTest
+  use Nebulex.Distributed.TransactionTest
   use Nebulex.Adapters.PartitionedInfoStatsTest
-
-  import Nebulex.CacheCase
 
   alias Nebulex.{Adapter, Telemetry, Utils}
   alias Nebulex.Distributed.TestCache.{PartitionedCache, PartitionedNilCache}
+
+  import Nebulex.CacheCase
 
   @moduletag capture_log: true
 
