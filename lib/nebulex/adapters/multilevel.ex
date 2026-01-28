@@ -1055,12 +1055,7 @@ defmodule Nebulex.Adapters.Multilevel do
   defp maybe_replicate({{:ok, value}, [level_meta | [_ | _] = levels]}, key, :inclusive) do
     case with_dynamic_cache(level_meta, :ttl, [key]) do
       {:ok, ttl} ->
-        :ok =
-          Enum.each(levels, fn l ->
-            with {:error, _} = error <- with_dynamic_cache(l, :put, [key, value, [ttl: ttl]]) do
-              throw({:return, error})
-            end
-          end)
+        :ok = replicate_to_levels(levels, key, value, ttl)
 
         {:ok, value}
 
@@ -1078,6 +1073,14 @@ defmodule Nebulex.Adapters.Multilevel do
 
   defp maybe_replicate({value, _levels}, _key, _inclusion_policy) do
     value
+  end
+
+  defp replicate_to_levels(levels, key, value, ttl) do
+    Enum.each(levels, fn l ->
+      with {:error, _} = error <- with_dynamic_cache(l, :put, [key, value, [ttl: ttl]]) do
+        throw({:return, error})
+      end
+    end)
   end
 
   defp build_query(%{select: select, query: query}) do

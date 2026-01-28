@@ -38,3 +38,6 @@ erl_crash.dump
 .sobelow*
 Elixir*
 /nebulex
+
+# Claude Code
+CLAUDE.md

@@ -214,6 +214,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+---
+
+## Elixir Style Guide
+
+**Source**: https://github.com/christopheradams/elixir_style_guide
+
+**Files affected**: `elixir-style.md`
+
+**License**: Creative Commons Attribution 3.0 Unported (CC-BY-3.0)
+
+This work is licensed under a Creative Commons Attribution 3.0 Unported License.
+
+https://creativecommons.org/licenses/by/3.0/
+
+Copyright (c) Christopher Adams and contributors.
+
 <!-- nebulex:THIRD_PARTY_LICENSES-end -->
 <!-- nebulex:elixir-start -->
 ## nebulex:elixir usage
@@ -409,20 +425,23 @@ Copyright (c) 2014 Chris McCord, licensed under the MIT License.
 
 ## Project Overview
 
-Nebulex is a fast, flexible, and extensible caching library for Elixir that provides:
-- Multiple cache adapters (local, distributed, multilevel, partitioned)
-- Declarative decorator-based caching inspired by Spring Cache Abstraction
-- OTP design patterns and fault tolerance
+Nebulex is a fast, flexible, and extensible caching library for Elixir that
+provides:
+- Multiple cache adapters (local, distributed, multilevel, partitioned).
+- Declarative decorator-based caching inspired by Spring Cache Abstraction.
+- OTP design patterns and fault tolerance.
 - Telemetry instrumentation
-- Support for TTL, eviction policies, transactions, and more
+- Support for TTL, eviction policies, transactions, and more.
 
 ## Architecture Patterns
 
 ### Cache Definition
 
-- Caches MUST be defined using `use Nebulex.Cache` with `:otp_app` and `:adapter` options
-- Caches should be started in the application supervision tree, not manually
-- Use descriptive cache module names that indicate their purpose (e.g., `MyApp.LocalCache`, `MyApp.UserCache`)
+- Caches MUST be defined using `use Nebulex.Cache` with `:otp_app` and
+  `:adapter` options.
+- Caches should be started in the application supervision tree, not manually.
+- Use descriptive cache module names that indicate their purpose
+  (e.g., `MyApp.LocalCache`, `MyApp.UserCache`).
 
 **Example**:
 
@@ -436,20 +455,24 @@ end
 
 ### Adapter Pattern
 
-- All adapters MUST implement the `Nebulex.Adapter` behaviour
-- Adapters MUST implement `c:init/1` returning `{:ok, child_spec, adapter_meta}`
-- Adapter functions MUST return `{:ok, value}` or `{:error, reason}` tuples
-- Use `wrap_error/2` from `Nebulex.Utils` to wrap errors consistently
-- Implement optional behaviours as needed: `Nebulex.Adapter.KV`, `Nebulex.Adapter.Queryable`, etc.
-- Leverage `use Nebulex.Adapter.Transaction` and similar modules for default implementations
+- All adapters MUST implement the `Nebulex.Adapter` behaviour.
+- Adapters MUST implement `c:init/1` returning
+  `{:ok, child_spec, adapter_meta}`.
+- Adapter functions MUST return `{:ok, value}` or `{:error, reason}` tuples.
+- Use `wrap_error/2` from `Nebulex.Utils` to wrap errors consistently.
+- Implement optional behaviours as needed: `Nebulex.Adapter.KV`,
+  `Nebulex.Adapter.Queryable`, etc.
 
 ### Command Pattern
 
-- Use `defcommand/2` macro from `Nebulex.Adapter` to build public command wrappers
-- Use `defcommandp/2` for private command wrappers
-- Command functions automatically handle telemetry, metadata, and error wrapping
-- The first parameter to commands should always be `name` (the cache name or PID)
-- The last parameter should always be `opts` (keyword list)
+- Use `defcommand/2` macro from `Nebulex.Adapter` to build public command
+  wrappers.
+- Use `defcommandp/2` for private command wrappers.
+- Command functions automatically handle telemetry, metadata, and error
+  wrapping.
+- The first parameter to commands should always be `name`
+  (the cache name or PID).
+- The last parameter should always be `opts` (keyword list).
 
 **Example**:
 
@@ -462,17 +485,21 @@ defcommandp do_put(name, key, value, on_write, ttl, keep_ttl?, opts), command: :
 
 ### Tuple Returns
 
-- Read operations that can fail MUST return `{:ok, value}` or `{:error, %Nebulex.KeyError{}}` for missing keys
-- Write operations MUST return `{:ok, true}` for success or `{:ok, false}` for conditional failures (e.g., `put_new`)
-- Delete operations MUST return `:ok` regardless of whether the key existed
-- NEVER return bare `:error` atoms; always use `{:error, reason}` tuples
+- Read operations that can fail MUST return `{:ok, value}` or
+  `{:error, %Nebulex.KeyError{}}` for missing keys.
+- Write operations MUST return `{:ok, true}` for success or `{:ok, false}` for
+  conditional failures (e.g., `put_new`).
+- Delete operations MUST return `:ok` regardless of whether the key existed.
+- NEVER return bare `:error` atoms; always use `{:error, reason}` tuples.
 
 ### Bang Functions
 
-- Provide bang versions (`!`) of functions that unwrap `{:ok, value}` or raise exceptions
-- Bang functions MUST use `unwrap_or_raise/1` from `Nebulex.Utils`
-- Functions that return `:ok` should have bang versions that also return `:ok`
-- Functions that return `{:ok, boolean}` should have bang versions that return the boolean
+- Provide bang versions (`!`) of functions that unwrap `{:ok, value}` or raise
+  exceptions.
+- Bang functions MUST use `unwrap_or_raise/1` from `Nebulex.Utils`.
+- Functions that return `:ok` should have bang versions that also return `:ok`.
+- Functions that return `{:ok, boolean}` should have bang versions that return
+  the boolean.
 
 **Example**:
 
@@ -491,12 +518,13 @@ end
 
 ### Options Handling
 
-- Use `Nebulex.Cache.Options` module for option validation
-- Call `Options.validate_runtime_shared_opts!/1` to validate runtime options
-- Use `Options.pop_and_validate_timeout!/2` for TTL and timeout options
-- Use `Options.pop_and_validate_boolean!/2` for boolean options
-- Use `Options.pop_and_validate_integer!/2` for integer options
-- Validate options as early as possible, preferably at the beginning of the function
+- Use `Nebulex.Cache.Options` module for option validation.
+- Call `Options.validate_runtime_shared_opts!/1` to validate runtime options.
+- Use `Options.pop_and_validate_timeout!/2` for TTL and timeout options.
+- Use `Options.pop_and_validate_boolean!/2` for boolean options.
+- Use `Options.pop_and_validate_integer!/2` for integer options.
+- Validate options as early as possible, preferably at the beginning of the
+  function.
 
 **Example**:
 
@@ -511,19 +539,21 @@ end
 
 ### Shared Options
 
-- All cache functions should accept `:telemetry`, `:telemetry_event`, and `:telemetry_metadata` options
-- Support lifecycle hooks: `:before` and `:after_return` for adapter-specific hooks
-- Document adapter-specific options clearly in the module documentation
+- All cache functions should accept `:telemetry`, `:telemetry_event`, and
+  `:telemetry_metadata` options.
+- Document adapter-specific options clearly in the module documentation.
 
 ## Decorators
 
 ### Decorator Usage
 
-- Use `use Nebulex.Caching` to enable decorator support in a module
-- Configure default cache via `use Nebulex.Caching, cache: MyCache`
-- Always use decorators on functions, not on function heads with multiple clauses
-- Prefer module captures over anonymous functions for better performance: `match: &__MODULE__.match_fun/1`
-- Avoid capturing large data structures in decorator lambdas
+- Use `use Nebulex.Caching` to enable decorator support in a module.
+- Configure default cache via `use Nebulex.Caching, cache: MyCache`.
+- Always use decorators on functions, not on function heads with multiple
+  clauses.
+- Prefer module captures over anonymous functions for better performance:
+  `match: &__MODULE__.match_fun/1`.
+- Avoid capturing large data structures in decorator lambdas.
 
 **Invalid**:
 
@@ -552,17 +582,22 @@ end
 
 ### Decorator Options
 
-- Use `:key` option to specify explicit cache keys; avoid relying solely on default key generation
-- Use `:references` for implementing cache key references and memory-efficient caching
-- Use `:match` option to conditionally cache values (e.g., `match: &match_fun/1`)
-- Use `:on_error` option to control error handling (`:raise` or `:nothing`)
-- Specify TTL via `:opts` option: `opts: [ttl: :timer.hours(1)]`
+- Use `:key` option to specify explicit cache keys; avoid relying solely on
+  default key generation.
+- Use `:references` for implementing cache key references and memory-efficient
+  caching.
+- Use `:match` option to conditionally cache values
+  (e.g., `match: &match_fun/1`).
+- Use `:on_error` option to control error handling (`:raise` or `:nothing`).
+- Specify TTL via `:opts` option: `opts: [ttl: :timer.hours(1)]`.
 
 ### `cacheable` Decorator
 
-- Use `@decorate cacheable` for read-through caching patterns
-- Combine with `:references` option when the same value needs multiple cache keys
-- Use `:match` function with references to ensure consistency (e.g., validating email matches)
+- Use `@decorate cacheable` for read-through caching patterns.
+- Combine with `:references` option when the same value needs multiple cache
+  keys.
+- Use `:match` function with references to ensure consistency
+  (e.g., validating email matches).
 
 **Example**:
 
@@ -583,9 +618,10 @@ defp match_email(_, _), do: false
 
 ### `cache_put` Decorator
 
-- Use `@decorate cache_put` for write-through caching patterns
-- Always use `:match` option to conditionally update cache (e.g., only on `{:ok, value}`)
-- Avoid using `cache_put` and `cacheable` on the same function
+- Use `@decorate cache_put` for write-through caching patterns.
+- Always use `:match` option to conditionally update cache
+  (e.g., only on `{:ok, value}`).
+- Avoid using `cache_put` and `cacheable` on the same function.
 
 **Example**:
 
@@ -603,11 +639,12 @@ defp match_ok({:error, _}), do: false
 
 ### `cache_evict` Decorator
 
-- Use `@decorate cache_evict` for cache invalidation
-- Use `key: {:in, keys}` to evict multiple keys at once
-- Use `:all_entries` option to clear the entire cache
-- Use `:before_invocation` option to evict before function execution
-- Use `:query` option for complex eviction patterns based on match specifications
+- Use `@decorate cache_evict` for cache invalidation.
+- Use `key: {:in, keys}` to evict multiple keys at once.
+- Use `:all_entries` option to clear the entire cache.
+- Use `:before_invocation` option to evict before function execution.
+- Use `:query` option for complex eviction patterns based on match
+  specifications.
 
 **Example**:
 
@@ -636,10 +673,11 @@ end
 
 ### Test Structure
 
-- Use `deftests do` macro for shared test suites that can run across multiple adapters
-- Structure tests with `describe` blocks grouping related functionality
-- Use context fixtures with `%{cache: cache}` for test setup
-- Test both successful and error scenarios for each function
+- Use `deftests do` macro for shared test suites that can run across multiple
+  adapters.
+- Structure tests with `describe` blocks grouping related functionality.
+- Use context fixtures with `%{cache: cache}` for test setup.
+- Test both successful and error scenarios for each function.
 
 **Example**:
 
@@ -666,11 +704,12 @@ end
 
 ### Test Assertions
 
-- Use `assert cache.function() == expected_value` for exact equality
-- Use `assert_raise ErrorType, ~r"message pattern"` for exception testing
-- Test edge cases: `nil`, boolean values (`true`, `false`), empty collections
-- Test both normal and bang (`!`) versions of functions
-- Avoid pattern matching in assertions when the full value is known (use direct equality)
+- Use `assert cache.function() == expected_value` for exact equality.
+- Use `assert_raise ErrorType, ~r"message pattern"` for exception testing.
+- Test edge cases: `nil`, boolean values (`true`, `false`), empty collections.
+- Test both normal and bang (`!`) versions of functions.
+- Avoid pattern matching in assertions when the full value is known
+  (use direct equality).
 
 **Invalid**:
 
@@ -688,32 +727,37 @@ assert cache.fetch(:key) == {:ok, expected_value}
 
 ### Telemetry Events
 
-- Emit telemetry events for all cache commands when `:telemetry` option is `true`
-- Use `:telemetry_prefix` option to customize event names (defaults to `[:cache_name, :cache]`)
-- Provide comprehensive metadata: `:adapter_meta`, `:command`, `:args`, `:result`
-- Support custom `:telemetry_event` and `:telemetry_metadata` options per command
+- Emit telemetry events for all cache commands when `:telemetry` option is
+  `true`.
+- Use `:telemetry_prefix` option to customize event names
+  (defaults to `[:cache_name, :cache]`).
+- Provide comprehensive metadata: `:adapter_meta`, `:command`, `:args`,
+  `:result`.
+- Support custom `:telemetry_event` and `:telemetry_metadata` options per
+  command.
 
 ### Telemetry Best Practices
 
-- Use `Nebulex.Telemetry.span/3` for span events (start, stop, exception)
-- Include measurements like `:duration` and `:system_time`
-- Document all telemetry events in module documentation with measurement and metadata keys
-- Provide example telemetry handlers in documentation
+- Use `Nebulex.Telemetry.span/3` for span events (start, stop, exception).
+- Include measurements like `:duration` and `:system_time`.
+- Document all telemetry events in module documentation with measurement and
+  metadata keys.
+- Provide example telemetry handlers in documentation.
 
 ## Error Handling
 
 ### Error Types
 
-- Use `Nebulex.Error` for general cache errors
-- Use `Nebulex.KeyError` for missing key errors
-- Use `Nebulex.CacheNotFoundError` for dynamic cache lookup failures
-- Wrap adapter-specific errors using `wrap_error/2` from `Nebulex.Utils`
+- Use `Nebulex.Error` for general cache errors.
+- Use `Nebulex.KeyError` for missing key errors.
+- Use `Nebulex.CacheNotFoundError` for dynamic cache lookup failures.
+- Wrap adapter-specific errors using `wrap_error/2` from `Nebulex.Utils`.
 
 ### Error Wrapping
 
-- Adapter functions should wrap errors consistently using `wrap_error/2`
-- Include relevant context in error metadata (`:key`, `:command`, `:reason`)
-- Preserve original error information in the `:reason` field
+- Adapter functions should wrap errors consistently using `wrap_error/2`.
+- Include relevant context in error metadata (`:key`, `:command`, `:reason`).
+- Preserve original error information in the `:reason` field.
 
 **Example**:
 
@@ -731,116 +775,770 @@ end
 
 ### Key Generation
 
-- Provide explicit keys in decorators when possible; avoid relying on default key generation
-- For complex keys, use module captures: `key: &MyModule.generate_key/1`
-- Keep captured data in decorator lambdas small; fetch large configs inside functions
+- Provide explicit keys in decorators when possible; avoid relying on default
+  key generation.
+- For complex keys, use module captures: `key: &MyModule.generate_key/1`.
+- Keep captured data in decorator lambdas small; fetch large configs inside
+  functions.
 
 ### Reference Keys
 
-- Use cache key references (`:references` option) to avoid storing duplicate values
-- Store references in a local cache and values in a remote cache (e.g., Redis) for optimization
+- Use cache key references (`:references` option) to avoid storing duplicate
+  values.
+- Store references in a local cache and values in a remote cache (e.g., Redis)
+  for optimization.
 - Set TTL for references to prevent dangling keys
-- Use external references with `keyref(key, cache: AnotherCache)` for cross-cache references
+- Use external references with `keyref(key, cache: AnotherCache)` for
+  cross-cache references.
 
 ### Optimization
 
-- Use `Stream` for large result sets instead of loading all data at once
-- Leverage `Task.async_stream/3` for concurrent cache operations when appropriate
-- Set appropriate TTL values to balance freshness and performance
-- Use `put_all/2` for batch operations instead of multiple `put/3` calls
+- Use `Stream` for large result sets instead of loading all data at once.
+- Leverage `Task.async_stream/3` for concurrent cache operations when
+  appropriate.
+- Set appropriate TTL values to balance freshness and performance.
+- Use `put_all/2` for batch operations instead of multiple `put/3` calls.
 
 ## Documentation Standards
 
 ### Module Documentation
 
-- Start with a clear `@moduledoc` explaining the purpose and main features
-- Include usage examples in module documentation
-- Document all compile-time options
-- Document all runtime shared options
-- Provide telemetry event documentation with measurements and metadata
+- Start with a clear `@moduledoc` explaining the purpose and main features,
+  except the modules using `NimbleOptions`, since they are documenting options.
+- Options documented using `NimbleOptions` should provide functions to insert
+  that documentation into the module docs. Therefore, it is not required to
+  document an option in the `moduledoc` or in the function `@doc` if it is
+  already inserted using `NimbleOptions`. For example,
+  `#{Nebulex.Cache.Options.start_link_options_docs()}`.
+- Options docummented using
+- Include usage examples in module documentation.
+- Document all compile-time options.
+- Document all runtime shared options.
+- Provide telemetry event documentation with measurements and metadata.
+- The maximum text length is 80 characters, and you should aim to adhere to this
+  limit. However, there are special cases where exceeding it is acceptable. For
+  example, you may exceed the limit for a link (e.g., ["my link"](http://github.com/elixir-nebulex))
+  or a code snippet that only exceeds the limit by a few characters (e.g., 1 or 2).
+  If a code snippet exceeds the 80-character limit by more than 1 or 2 haracters,
+  format it using the Elixir formatter.
+- When you make a change to the documentation, use `mix docs` to validate it.
 
 ### Function Documentation
 
-- Use `@doc` for all public functions
-- Include `@typedoc` for all custom types
-- Provide examples in function documentation using doctests when applicable
-- Document all options with descriptions and default values
-- Group related functions using `@doc group: "Group Name"`
+- Use `@doc` for all public functions.
+- Include `@typedoc` for all custom types.
+- Provide examples in function documentation using doctests when applicable.
+- Document all options with descriptions and default values.
+- Group related functions using `@doc group: "Group Name"`.
+- The maximum text length is 80 characters, and you should aim to adhere to this.
+  limit. However, there are special cases where exceeding it is acceptable. For
+  example, you may exceed the limit for a link (e.g., ["my link"](http://github.com/elixir-nebulex))
+  or a code snippet that only exceeds the limit by a few characters (e.g., 1 or 2).
+  If a code snippet exceeds the 80-character limit by more than 1 or 2 haracters,
+  format it using the Elixir formatter.
+- When you make a change to the documentation, use `mix docs` to validate it.
 
 ### Code Comments
 
-- Avoid obvious comments; code should be self-explanatory
-- Use comments for complex algorithms or non-obvious business logic
-- Mark internal functions with `@doc false` or `@moduledoc false`
-- Use `# Inline common instructions` followed by `@compile {:inline, function_name: arity}`
+- Avoid obvious comments; code should be self-explanatory.
+- Use comments for complex algorithms or non-obvious business logic. Use a
+  sigle `#` for code comments. E.g., `# My comment ...`.
+- For separating sectionn in a module, use `##`. E.g., `## API`,
+  `## Private functions`, etc.
+- Mark internal functions with `@doc false` or `@moduledoc false`.
+- Use `# Inline common instructions` followed by
+  `@compile inline: [function_name: arity]`.
+- The maximum text length is 80 characters, use multiple lines if the comment.
+  exceeds the limit.
 
 ## Naming Conventions
 
 ### Modules
 
-- Adapter modules: `Nebulex.Adapters.*` (e.g., `Nebulex.Adapters.Local`)
-- Cache modules: `<App>.Cache` or `<App>.<Context>Cache` (e.g., `MyApp.Cache`, `MyApp.UserCache`)
-- Behaviour modules: `Nebulex.Adapter.<Feature>` (e.g., `Nebulex.Adapter.KV`)
+- Adapter modules: `Nebulex.Adapters.*` (e.g., `Nebulex.Adapters.Local`).
+- Cache modules: `<App>.Cache` or `<App>.<Context>Cache`
+  (e.g., `MyApp.Cache`, `MyApp.UserCache`).
+- Behaviour modules: `Nebulex.Adapter.<Feature>` (e.g., `Nebulex.Adapter.KV`).
 
 ### Functions
 
-- Use descriptive function names: `fetch/2`, `put/3`, `delete/2`, `has_key?/1`
-- Bang versions: `fetch!/2`, `put!/3`, `delete!/2`
-- Private helpers: prefix with `do_` (e.g., `do_fetch/3`, `do_put/7`)
-- Predicate functions: suffix with `?` (e.g., `has_key?/1`, `expired?/2`)
+- Use descriptive function names: `fetch/2`, `put/3`, `delete/2`, `has_key?/1`.
+- Bang versions: `fetch!/2`, `put!/3`, `delete!/2`.
+- Private helpers: prefix with `do_` (e.g., `do_fetch/3`, `do_put/7`).
+- Predicate functions: suffix with `?` (e.g., `has_key?/1`, `expired?/2`).
 
 ### Variables
 
-- Cache instance: `cache`
-- Adapter metadata: `adapter_meta`
-- Options: `opts`
-- Keys: `key` or `keys`
-- Values: `value` or `values`
-- TTL: `ttl`
+- Cache instance: `cache`.
+- Adapter metadata: `adapter_meta`.
+- Options: `opts`.
+- Keys: `key` or `keys`.
+- Values: `value` or `values`.
+- TTL: `ttl`.
 
 ## Code Organization
 
 ### File Structure
 
-- Main cache API: `lib/nebulex/cache.ex`
-- Adapter behaviour: `lib/nebulex/adapter.ex`
-- Adapter implementations: `lib/nebulex/adapters/<adapter_name>.ex`
-- Cache features: `lib/nebulex/cache/<feature>.ex`
-- Decorators: `lib/nebulex/caching/decorators.ex`
-- Mix tasks: `lib/mix/tasks/<task_name>.ex`
+- Main cache API: `lib/nebulex/cache.ex`.
+- Adapter behaviour: `lib/nebulex/adapter.ex`.
+- Adapter implementations: `lib/nebulex/adapters/<adapter_name>.ex`.
+- Cache features: `lib/nebulex/cache/<feature>.ex`.
+- Decorators: `lib/nebulex/caching/decorators.ex`.
+- Mix tasks: `lib/mix/tasks/<task_name>.ex`.
 
 ### Module Grouping
 
-- Keep related functionality together (e.g., all KV operations in `Nebulex.Cache.KV`)
-- Use nested modules for options, helpers, and internal implementation details
-- Separate public API from internal implementation
+- Keep related functionality together (e.g., all KV operations in `Nebulex.Cache.KV`).
+- Use nested modules for options, helpers, and internal implementation details.
+- Separate public API from internal implementation.
 
 ## Common Pitfalls to Avoid
 
-- **Do NOT** use decorators on multi-clause functions without proper wrapper functions
-- **Do NOT** forget to validate options at the beginning of functions
-- **Do NOT** return inconsistent error types; always use tuples or raise exceptions via bang functions
-- **Do NOT** capture large data structures in decorator lambdas
-- **Do NOT** forget to handle `nil`, boolean, and edge case values in tests
-- **Do NOT** use `cache_put` and `cacheable` decorators on the same function
-- **Do NOT** forget to evict cache references when using `:references` option; use TTL or explicit eviction
-- **Do NOT** implement adapter callbacks without proper error wrapping
-- **Do NOT** skip telemetry support in adapter implementations
-- **Do NOT** use pattern matching in test assertions when the full value is known
+- **Do NOT** use decorators on multi-clause functions without proper wrapper
+  functions.
+- **Do NOT** forget to validate options at the beginning of functions.
+- **Do NOT** return inconsistent error types; always use tuples or raise
+  exceptions via bang functions.
+- **Do NOT** capture large data structures in decorator lambdas.
+- **Do NOT** forget to handle `nil`, boolean, and edge case values in tests.
+- **Do NOT** use `cache_put` and `cacheable` decorators on the same function.
+- **Do NOT** forget to evict cache references when using `:references` option;
+  use TTL or explicit eviction.
+- **Do NOT** implement adapter callbacks without proper error wrapping.
+- **Do NOT** skip telemetry support in adapter implementations.
+- **Do NOT** use pattern matching in test assertions when the full value is
+  known.
 
 ## Backward Compatibility
 
-- Maintain backward compatibility when adding new options (use default values)
-- Deprecate old APIs before removal; provide migration path in documentation
-- Follow semantic versioning strictly: major version for breaking changes
-- Test against multiple Elixir and OTP versions in CI
+- Maintain backward compatibility when adding new options (use default values).
+- Deprecate old APIs before removal; provide migration path in documentation.
+- Follow semantic versioning strictly: major version for breaking changes.
+- Test against multiple Elixir and OTP versions in CI.
 
 ## Dependencies
 
-- Keep dependencies minimal and well-justified
-- Prefer standard library solutions over external dependencies
-- Use optional dependencies for non-core features
-- Document all dependencies in README with their purpose
+- Keep dependencies minimal and well-justified.
+- Prefer standard library solutions over external dependencies.
+- Use optional dependencies for non-core features.
+- Document all dependencies in README with their purpose.
 
 <!-- nebulex:nebulex-end -->
+<!-- nebulex:elixir-style-start -->
+## nebulex:elixir-style usage
+# Elixir Style
+
+> Most of these guidelines are based on
+> [The Elixir Style Guide](https://github.com/christopheradams/elixir_style_guide)
+> by Christopher Adams, licensed under
+> [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/).
+
+## Formatting
+
+### Whitespace
+
+- Use blank lines between `def`s to break up a function into logical paragraphs.
+  For example:
+
+  ```elixir
+  def some_function(some_data) do
+    some_data |> other_function() |> List.first()
+  end
+
+  def some_function do
+    result
+  end
+
+  def some_other_function do
+    another_result
+  end
+
+  def a_longer_function do
+    one
+    two
+
+    three
+    four
+  end
+  ```
+
+- If the function head and `do:` clause are too long to fit on the same line, put `do:` on a new line, indented one level more than the previous line. For example:
+
+  ```elixir
+  def some_function([:foo, :bar, :baz] = args),
+    do: Enum.map(args, fn arg -> arg <> " is on a very long line!" end)
+  ```
+
+  When the `do:` clause starts on its own line, treat it as a multiline function by separating it with blank lines.
+
+  ```elixir
+  # not preferred
+  def some_function([]), do: :empty
+  def some_function(_),
+    do: :very_long_line_here
+
+  # preferred
+  def some_function([]), do: :empty
+
+  def some_function(_),
+    do: :very_long_line_here
+  ```
+
+- Add a blank line after a multiline assignment as a visual cue that the assignment is 'over'. For example:
+
+  ```elixir
+  # not preferred
+  some_string =
+    "Hello"
+    |> String.downcase()
+    |> String.trim()
+  another_string <> some_string
+
+  # preferred
+  some_string =
+    "Hello"
+    |> String.downcase()
+    |> String.trim()
+
+  another_string <> some_string
+  ```
+
+  ```elixir
+  # also not preferred
+  something =
+    if x == 2 do
+      "Hi"
+    else
+      "Bye"
+    end
+  String.downcase(something)
+
+  # preferred
+  something =
+    if x == 2 do
+      "Hi"
+    else
+      "Bye"
+    end
+
+  String.downcase(something)
+  ```
+
+### Parentheses
+
+- Use parentheses when defining a type.
+
+  ```elixir
+  # not preferred
+  @type name :: atom
+
+  # preferred
+  @type name() :: atom
+  ```
+
+## Gneral guidelines
+
+The rules in this section may not be applied by the code formatter, but they are generally preferred practice.
+
+### Expressions
+
+- Run single-line `def`s that match for the same function together, but separate multiline `def`s with a blank line. For example:
+
+  ```elixir
+  def some_function(nil), do: {:error, "No Value"}
+  def some_function([]), do: :ok
+
+  def some_function([first | rest]) do
+    some_function(rest)
+  end
+  ```
+
+- If you have more than one multiline `def`, do not use single-line `def`s. For example:
+
+  ```elixir
+  def some_function(nil) do
+    {:error, "No Value"}
+  end
+
+  def some_function([]) do
+    :ok
+  end
+
+  def some_function([first | rest]) do
+    some_function(rest)
+  end
+
+  def some_function([first | rest], opts) do
+    some_function(rest, opts)
+  end
+  ```
+
+- Use the pipe operator to chain functions together. For example:
+
+  ```elixir
+  # not preferred
+  String.trim(String.downcase(some_string))
+
+  # preferred
+  some_string |> String.downcase() |> String.trim()
+
+  # Multiline pipelines are not further indented
+  some_string
+  |> String.downcase()
+  |> String.trim()
+
+  # Multiline pipelines on the right side of a pattern match
+  # should be indented on a new line
+  sanitized_string =
+    some_string
+    |> String.downcase()
+    |> String.trim()
+  ```
+
+- Avoid using the pipe operator just once, unless the first expression is a function. For example:
+
+  ```elixir
+  # not preferred
+  some_string |> String.downcase()
+
+  # preferred
+  String.downcase(some_string)
+
+  # not preferred
+  Version.parse(System.version())
+
+  # preferred
+  System.version() |> Version.parse()
+  ```
+
+- Use parentheses when a `def` has arguments, and omit them when it doesn't. For example:
+
+  ```elixir
+  # not preferred
+  def some_function arg1, arg2 do
+    # body omitted
+  end
+
+  def some_function() do
+    # body omitted
+  end
+
+  # preferred
+  def some_function(arg1, arg2) do
+    # body omitted
+  end
+
+  def some_function do
+    # body omitted
+  end
+  ```
+
+- Use `do:` for single line `if/unless` statements.
+
+  ```elixir
+  # preferred
+  if some_condition, do: # some_stuff
+  ```
+
+- Use `true` as the last condition of the `cond` special form when you need a clause that always matches.
+
+  ```elixir
+  # not preferred
+  cond do
+    1 + 2 == 5 ->
+      "Nope"
+
+    1 + 3 == 5 ->
+      "Uh, uh"
+
+    :else ->
+      "OK"
+  end
+
+  # preferred
+  cond do
+    1 + 2 == 5 ->
+      "Nope"
+
+    1 + 3 == 5 ->
+      "Uh, uh"
+
+    true ->
+      "OK"
+  end
+  ```
+
+### Naming
+
+- Use `snake_case` for atoms, functions and variables.
+
+  ```elixir
+  # not preferred
+  :"some atom"
+  :SomeAtom
+  :someAtom
+
+  someVar = 5
+
+  def someFunction do
+    ...
+  end
+
+  # preferred
+  :some_atom
+
+  some_var = 5
+
+  def some_function do
+    ...
+  end
+  ```
+
+- Use `CamelCase` for modules (keep acronyms like HTTP, RFC, XML uppercase).
+
+  ```elixir
+  # not preferred
+  defmodule Somemodule do
+    ...
+  end
+
+  defmodule Some_Module do
+    ...
+  end
+
+  defmodule SomeXml do
+    ...
+  end
+
+  # preferred
+  defmodule SomeModule do
+    ...
+  end
+
+  defmodule SomeXML do
+    ...
+  end
+  ```
+
+- Functions that return a boolean (`true` or `false`) should be named with a trailing question mark.
+
+  ```elixir
+  def cool?(var) do
+    String.contains?(var, "cool")
+  end
+  ```
+
+- Boolean checks that can be used in guard clauses (custom guards) should be named with an `is_` prefix.
+
+  ```elixir
+  defguard is_cool(var) when var == "cool"
+  defguard is_very_cool(var) when var == "very cool"
+  ```
+
+### Modules
+
+- List module attributes, directives, and macros in the following order:
+
+  1. `@moduledoc`
+  2. `@behaviour`
+  3. `use`
+  4. `import`
+  5. `require`
+  6. `alias`
+  7. `@module_attribute`
+  8. `defstruct`
+  9. `@type`
+  10. `@callback`
+  11. `@macrocallback`
+  12. `@optional_callbacks`
+  13. `defmacro`, `defmodule`, `defguard`, `def`, etc.
+
+  Add a blank line between each grouping, and sort the terms (like module names) alphabetically. Here's an overall example of how you should order things in your modules:
+
+  ```elixir
+  defmodule MyModule do
+    @moduledoc """
+    An example module
+    """
+
+    @behaviour MyBehaviour
+
+    use GenServer
+
+    import Something
+    import SomethingElse
+
+    require Integer
+
+    alias My.Long.Module.Name
+    alias My.Other.Module.Example
+
+    @module_attribute :foo
+    @other_attribute 100
+
+    defstruct [:name, params: []]
+
+    @type params :: [{binary, binary}]
+
+    @callback some_function(term) :: :ok | {:error, term}
+
+    @macrocallback macro_name(term) :: Macro.t()
+
+    @optional_callbacks macro_name: 1
+
+    @doc false
+    defmacro __using__(_opts), do: :no_op
+
+    @doc """
+    Determines when a term is `:ok`. Allowed in guards.
+    """
+    defguard is_ok(term) when term == :ok
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    # Define other functions here.
+  end
+  ```
+
+- Use the `__MODULE__` pseudo variable when a module refers to itself. This avoids having to update any self-references when the module name changes.
+
+  ```elixir
+  defmodule SomeProject.SomeModule do
+    defstruct [:name]
+
+    def name(%__MODULE__{name: name}), do: name
+  end
+
+### Typespecs
+
+- Place `@typedoc` and `@type` definitions together, and separate each pair with a blank line.
+
+  ```elixir
+  defmodule SomeModule do
+    @moduledoc false
+
+    @typedoc "The name"
+    @type name() :: atom()
+
+    @typedoc "The result"
+    @type result() :: {:ok, any()} | {:error, any()}
+
+    ...
+  end
+  ```
+
+- Name the main type for a module `t()`, for example: the type specification for a struct.
+
+  ```elixir
+  defstruct name: nil, params: []
+
+  @typedoc "The type for ..."
+  @type t() :: %__MODULE__{
+          name: String.t() | nil,
+          params: Keyword.t()
+        }
+  ```
+
+- Place specifications right before the function definition, after the `@doc`, without separating them by a blank line.
+
+  ```elixir
+  @doc """
+  Some function description.
+  """
+  @spec some_function(any()) :: result()
+  def some_function(some_data) do
+    {:ok, some_data}
+  end
+
+### Structs
+
+- Use a list of atoms for struct fields that default to `nil`, followed by the other keywords.
+
+  ```elixir
+  # not preferred
+  defstruct name: nil, params: nil, active: true
+
+  # preferred
+  defstruct [:name, :params, active: true]
+  ```
+
+- Omit square brackets when the argument of a `defstruct` is a keyword list.
+
+  ```elixir
+  # not preferred
+  defstruct [params: [], active: true]
+
+  # preferred
+  defstruct params: [], active: true
+
+  # required - brackets are not optional, with at least one atom in the list
+  defstruct [:name, params: [], active: true]
+  ```
+
+- If a struct definition spans multiple lines, put each element on its own line, keeping the elements aligned.
+
+  ```elixir
+  defstruct foo: "test",
+            bar: true,
+            baz: false,
+            qux: false,
+            quux: 1
+  ```
+
+  If a multiline struct requires brackets, format it as a multiline list:
+
+  ```elixir
+  defstruct [
+    :name,
+    params: [],
+    active: true
+  ]
+  ```
+
+### Exceptions
+
+- Make exception names end with a trailing `Error`.
+
+  ```elixir
+  # not preferred
+  defmodule BadHTTPCode do
+    defexception [:message]
+  end
+
+  defmodule BadHTTPCodeException do
+    defexception [:message]
+  end
+
+  # preferred
+  defmodule BadHTTPCodeError do
+    defexception [:message]
+  end
+  ```
+
+- Use lowercase error messages when raising exceptions, with no trailing punctuation.
+
+  ```elixir
+  # not preferred
+  raise ArgumentError, "This is not valid."
+
+  # preferred
+  raise ArgumentError, "this is not valid"
+  ```
+
+### Collections
+
+- Always use the special syntax for keyword lists.
+
+  ```elixir
+  # not preferred
+  some_value = [{:a, "baz"}, {:b, "qux"}]
+
+  # preferred
+  some_value = [a: "baz", b: "qux"]
+  ```
+
+- Use the shorthand key-value syntax for maps when all of the keys are atoms.
+
+  ```elixir
+  # not preferred
+  %{:a => 1, :b => 2, :c => 0}
+
+  # preferred
+  %{a: 1, b: 2, c: 3}
+  ```
+
+- Use the verbose key-value syntax for maps if any key is not an atom.
+
+  ```elixir
+  # not preferred
+  %{"c" => 0, a: 1, b: 2}
+
+  # preferred
+  %{:a => 1, :b => 2, "c" => 0}
+  ```
+
+### Testing
+
+- When writing ExUnit assertions, put the expression being tested to the left of the operator, and the expected result to the right, unless the assertion is a pattern match.
+
+  ```elixir
+  # not preferred
+  assert true == actual_function(1)
+
+  # preferred
+  assert actual_function(1) == true
+
+  # required - the assertion is a pattern match, and the `expected` variable is used later
+  assert {:ok, expected} = actual_function(3)
+  assert expected.atom == :atom
+  assert expected.int == 123
+
+  # preferred - if the right side is known, even it it is a tuple
+  assert actual_function(11) == {:ok, %{atom: :atom, int: 123}}
+
+  # preferred - if the right side is known (using a variable)
+  expected = %{atom: :atom, int: 123}
+  assert actual_function(11) == {:ok, expected}
+  ```
+
+## Extra guidelines
+
+- Use a blank line for the return or final statement (unless it is a single line).
+
+  **Avoid**:
+
+      def some_function(arg) do
+        Logger.info("Arg: #{inspect(some_data)}")
+        :ok
+      end
+
+  **Prefer**:
+
+      def some_function(some_data) do
+        Logger.info("Arg: #{inspect(some_data)}")
+
+        :ok
+      end
+
+- Use multi-line when a function returns with a pipe.
+
+  **Avoid**:
+
+      def some_function(some_data) do
+        some_data |> other_function() |> List.first()
+      end
+
+  **Prefer**:
+
+      def some_function(some_data) do
+        some_data
+        |> other_function()
+        |> List.first()
+      end
+
+- Use `with` when only one case has to be handled, either the success or the error.
+
+  **Avoid**: `case` forwarding the same result
+
+      case some_call() do
+        :ok ->
+          :ok
+
+        {:error, reason} = error ->
+          Logger.error("Error: #{inspect(reason)}")
+
+          error
+      end
+
+  **Prefer**: `with` handling only the needed case
+
+      with {:error, reason} = error <- some_call() do
+        Logger.error("Error: #{inspect(reason)}")
+
+        error
+      end
+
+<!-- nebulex:elixir-style-end -->
 <!-- usage-rules-end -->
