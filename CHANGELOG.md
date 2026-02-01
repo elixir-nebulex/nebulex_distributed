@@ -9,6 +9,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Enhancements
 
+- [Nebulex.Adapters.Coherent] Added new coherent cache adapter that provides
+  a "local cache with distributed invalidation" pattern. Each node maintains
+  its own independent local cache, but writes trigger invalidation events
+  across the cluster via `Nebulex.Streams`. Key features include:
+  - Local storage with maximum read performance (pure local lookups).
+  - Distributed invalidation via Phoenix.PubSub using `Nebulex.Streams`.
+  - Write-invalidate protocol that only broadcasts invalidation events,
+    not actual values, minimizing network overhead.
+  - Eventual consistency model where invalidated entries are deleted from
+    remote caches, forcing fresh fetches from the System-of-Record.
+  - Configurable primary storage adapter (defaults to `Nebulex.Adapters.Local`).
+  - Ideal for read-heavy workloads, configuration/reference data caching,
+    and session caches.
+  [#6](https://github.com/elixir-nebulex/nebulex_distributed/issues/6).
 - [Nebulex.Distributed.Transaction] Implemented adapter-specific transaction
   support using `Nebulex.Distributed.Transaction`, which provides a distributed
   locking implementation based on Erlang's `:global` module. This module is now

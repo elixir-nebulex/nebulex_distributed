@@ -180,7 +180,7 @@ defmodule Nebulex.Adapters.Partitioned do
         use Nebulex.Cache,
           otp_app: :my_app,
           adapter: Nebulex.Adapters.Partitioned,
-          primary_storage_adapter: Nebulex.Adapters.Local
+          adapter_opts: [primary_storage_adapter: Nebulex.Adapters.Local]
       end
 
   Where the configuration for the cache must be in your application environment,
