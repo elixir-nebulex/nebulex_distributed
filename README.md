@@ -1,12 +1,12 @@
 # Nebulex Distributed :spider_web:
 > Distributed cache topologies adapters for [Nebulex][Nebulex].
 
-[Nebulex]: http://github.com/elixir-nebulex/nebulex
+[Nebulex]: https://github.com/elixir-nebulex/nebulex
 
-![CI](http://github.com/elixir-nebulex/nebulex_distributed/workflows/CI/badge.svg)
-[![Codecov](http://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)](http://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)
-[![Hex.pm](http://img.shields.io/hexpm/v/nebulex_distributed.svg)](http://hex.pm/packages/nebulex_distributed)
-[![Documentation](http://img.shields.io/badge/Documentation-ff69b4)](http://hexdocs.pm/nebulex_distributed)
+![CI](https://github.com/elixir-nebulex/nebulex_distributed/workflows/CI/badge.svg)
+[![Codecov](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)
+[![Hex.pm](https://img.shields.io/hexpm/v/nebulex_distributed.svg)](https://hex.pm/packages/nebulex_distributed)
+[![Documentation](https://img.shields.io/badge/Documentation-ff69b4)](https://hexdocs.pm/nebulex_distributed)
 
 ## About
 
@@ -18,14 +18,17 @@ distributed topologies:
   * [`Nebulex.Adapters.Partitioned`][partitioned] - Partitioned cache topology.
   * [`Nebulex.Adapters.Multilevel`][multilevel] - Multi-level or near cache
     topology.
-  * `Nebulex.Adapters.Replicated` - Replicated cache topology (**WIP!**).
+  * [`Nebulex.Adapters.Coherent`][coherent] - Local cache with distributed
+    invalidation via `Nebulex.Streams`.
+  * 🚧 `Nebulex.Adapters.Replicated` - Replicated cache topology (**WIP!**).
 
 These adapters work more as wrappers for an existing local adapter and provide
 the distributed topology on top of it. You can optionally set the adapter for
 the primary cache storage with the option `:primary_storage_adapter`.
 
-[partitioned]: http://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Partitioned.html
-[multilevel]: http://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Multilevel.html
+[partitioned]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Partitioned.html
+[multilevel]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Multilevel.html
+[coherent]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Coherent.html
 
 ## Installation
 
@@ -35,18 +38,20 @@ the primary cache storage with the option `:primary_storage_adapter`.
 ```elixir
 def deps do
   [
-    {:nebulex_distributed, "~> 3.0.0-rc.2"},
-    {:telemetry, "~> 0.4 or ~> 1.0"}    # For observability/telemetry support
+    {:nebulex_distributed, "~> 3.0"},
+    {:telemetry, "~> 0.4 or ~> 1.0"},  # For observability/telemetry support
+    {:decorator, "~> 1.4"},            # For declarative caching
   ]
 end
 ```
 
-The `:telemetry` dependency is optional but highly recommended for observability
-and monitoring cache operations.
+The `:telemetry` (observability and monitoring cache operations) and
+`:decorator` (declarative caching) dependencies are optional but highly
+recommended.
 
 See the [online documentation][online_docs] for more information.
 
-[online_docs]: http://hexdocs.pm/nebulex_distributed
+[online_docs]: https://hexdocs.pm/nebulex_distributed
 
 ## Testing
 
@@ -91,7 +96,7 @@ You will find the coverage report within `cover/excoveralls.html`.
 ## Benchmarks
 
 The adapter provides a set of basic benchmark tests using the library
-[benchee](http://github.com/PragTob/benchee), and they are located within
+[benchee](https://github.com/PragTob/benchee), and they are located within
 the directory [benchmarks](./benchmarks).
 
 To run a benchmark test you have to run:
@@ -110,9 +115,9 @@ Where `BENCH_TEST_FILE` can be any of:
 
 Contributions to Nebulex are very welcome and appreciated!
 
-Use the [issue tracker](http://github.com/elixir-nebulex/nebulex_distributed/issues)
+Use the [issue tracker](https://github.com/elixir-nebulex/nebulex_distributed/issues)
 for bug reports or feature requests. Open a
-[pull request](http://github.com/elixir-nebulex/nebulex_distributed/pulls)
+[pull request](https://github.com/elixir-nebulex/nebulex_distributed/pulls)
 when you are ready to contribute.
 
 When submitting a pull request you should not update the
@@ -124,6 +129,6 @@ all checks run successfully.
 
 ## Copyright and License
 
-Copyright (c) 2024 Carlos Andres Bolaños R.A.
+Copyright (c) 2024-2026 Carlos Andres Bolaños R.A.
 
 `nebulex_distributed` source code is licensed under the [MIT License](LICENSE.md).

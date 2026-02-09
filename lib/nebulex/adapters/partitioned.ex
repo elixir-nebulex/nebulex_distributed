@@ -246,7 +246,7 @@ defmodule Nebulex.Adapters.Partitioned do
   `[:my_app, :partitioned_cache]`. However, you could specify the
   `:telemetry_prefix` for the primary storage within the `:primary` options
   (if you want to override the default). See the
-  [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
+  [Telemetry guide](https://hexdocs.pm/nebulex/telemetry.html)
   for more information and examples.
 
   ## Adapter-specific telemetry events

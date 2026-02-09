@@ -1,6 +1,6 @@
 # MIT License
 
-Copyright (c) 2024 Carlos Andres Bolaños R.A.
+Copyright (c) 2024-2026 Carlos Andres Bolaños R.A.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

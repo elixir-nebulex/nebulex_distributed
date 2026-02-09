@@ -2,8 +2,8 @@ defmodule NebulexDistributed.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
-  @version "3.0.0-rc.2"
-  # @nbx_vsn "3.0.0-rc.2"
+  @version "3.0.0-dev"
+  # @nbx_vsn "3.0.0"
 
   def project do
     [
@@ -19,6 +19,9 @@ defmodule NebulexDistributed.MixProject do
 
       # Dialyzer
       dialyzer: dialyzer(),
+
+      # Usage Rules
+      usage_rules: usage_rules(),
 
       # Hex
       package: package(),
@@ -74,8 +77,11 @@ defmodule NebulexDistributed.MixProject do
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
+      # Usage Rules
+      {:usage_rules, "~> 1.0.0-rc.2", only: [:dev]},
+
       # Docs
-      {:ex_doc, "~> 0.39", only: [:dev, :test], runtime: false}
+      {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -101,7 +107,8 @@ defmodule NebulexDistributed.MixProject do
         "sobelow --skip --exit Low",
         "coveralls.html",
         "dialyzer --format short"
-      ]
+      ],
+      "ur.sync": ["usage_rules.sync"]
     ]
   end
 
@@ -122,15 +129,20 @@ defmodule NebulexDistributed.MixProject do
       main: "Nebulex.Distributed",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      canonical: "http://hexdocs.pm/nebulex_distributed",
+      canonical: "https://hexdocs.pm/nebulex_distributed",
       groups_for_modules: [
-        Adapters: [
+        # Nebulex.Distributed
+
+        "Built-in adapters": [
+          Nebulex.Adapters.Coherent,
           Nebulex.Adapters.Multilevel,
           Nebulex.Adapters.Partitioned
         ],
         Utilities: [
           Nebulex.Distributed.Cluster,
-          Nebulex.Distributed.RPC
+          Nebulex.Distributed.RPC,
+          Nebulex.Distributed.Transaction,
+          Nebulex.Adapters.Partitioned.RingMonitor
         ]
       ]
     ]
@@ -151,6 +163,25 @@ defmodule NebulexDistributed.MixProject do
   end
 
   defp plt_file_name do
-    "dialyzer-#{Mix.env()}-#{System.otp_release()}-#{System.version()}.plt"
+    "dialyzer-#{Mix.env()}-#{System.version()}-#{System.otp_release()}.plt"
+  end
+
+  defp usage_rules do
+    [
+      # The file to write usage rules into (required for usage_rules syncing)
+      file: "AGENTS.md",
+
+      # rules to include directly in CLAUDE.md
+      usage_rules: ["nebulex:all"],
+
+      # Agent skills configuration
+      skills: [
+        # The location of the skills directory
+        location: ".claude/skills",
+
+        # Auto-build a "use-<pkg>" skill per dependency
+        deps: [:nebulex]
+      ]
+    ]
   end
 end

@@ -73,7 +73,7 @@ defmodule Nebulex.Adapters.Coherent do
 
   | Aspect | Coherent | Partitioned | Multilevel |
   |--------|----------|-------------|------------|
-  | Data Location | Full copy on each node | Sharded across nodes | L1 local + L2 shared |
+  | Data Location | Independent per node | Sharded across nodes | L1 local + L2 shared |
   | Read Performance | Fastest (local) | Network hop required | L1 fast, L2 slower |
   | Write Behavior | Local + invalidation broadcast | Remote write to owner | Write through levels |
   | Consistency | Eventual (after invalidation) | Strong (single owner) | Varies by config |
@@ -170,7 +170,7 @@ defmodule Nebulex.Adapters.Coherent do
     * `[:nebulex, :streams, :invalidator, :invalidate, :start]`
     * `[:nebulex, :streams, :invalidator, :invalidate, :stop]`
 
-  See the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html) and
+  See the [Telemetry guide](https://hexdocs.pm/nebulex/telemetry.html) and
   `Nebulex.Streams` documentation for more information.
 
   ## Extended API

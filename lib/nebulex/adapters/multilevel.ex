@@ -320,7 +320,7 @@ defmodule Nebulex.Adapters.Multilevel do
       #   [:my_app, :multilevel, :l2, :command, :start]   # L2 wrapper
       #   [:my_app, :multilevel, :l2, :primary, :command, :start]  # L2 primary
 
-  Refer to the [Telemetry guide](http://hexdocs.pm/nebulex/telemetry.html)
+  Refer to the [Telemetry guide](https://hexdocs.pm/nebulex/telemetry.html)
   for complete information on Nebulex Telemetry events and how to attach
   handlers.
 

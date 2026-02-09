@@ -1,7 +1,33 @@
 defmodule Nebulex.Adapters.Partitioned.RingMonitor do
   @moduledoc """
-  This module is responsible for monitoring the cluster and keeping the hash
-  ring in sync with the current cluster topology.
+  A `GenServer` that keeps the consistent hash ring in sync with the
+  current cluster topology for `Nebulex.Adapters.Partitioned`.
+
+  The RingMonitor is started automatically as part of the partitioned
+  cache supervision tree. It performs the following duties:
+
+    * **Cluster subscription** - Subscribes to Erlang's `:pg` (process
+      groups) via `Nebulex.Distributed.Cluster.monitor_scope/0` to
+      receive join and leave notifications for the cache's group.
+
+    * **Ring synchronisation** - When nodes join or leave the cluster,
+      the RingMonitor adds or removes them from the `ExHashRing.Ring`,
+      ensuring key-to-node mappings stay up to date.
+
+    * **Periodic rejoin** - To handle race conditions during concurrent
+      cluster startup (where some nodes may miss initial join events),
+      the RingMonitor periodically rejoins the `:pg` group at the
+      interval configured by `:rejoin_interval` (default: 30 seconds).
+      Because `:pg` joins are idempotent, this forces all nodes to
+      refresh their ring view and guarantees eventual consistency.
+
+  ## Telemetry events
+
+  The RingMonitor emits Telemetry events under
+  `telemetry_prefix ++ [:ring_monitor, event]`. See the
+  "Adapter-specific telemetry events" section in
+  `Nebulex.Adapters.Partitioned` for the full list of events,
+  measurements, and metadata.
   """
 
   use GenServer

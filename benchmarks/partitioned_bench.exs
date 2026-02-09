@@ -19,7 +19,7 @@ bulk = for x <- 1..100, do: {x, x}
 Enum.each(1..5000, &BenchCache.put(&1, &1))
 
 inputs = %{
-  "Redis Cache" => BenchCache
+  "Partitioned Cache" => BenchCache
 }
 
 benchmarks = %{
@@ -55,15 +55,6 @@ benchmarks = %{
   end,
   "incr!" => fn {cache, _random} ->
     cache.incr!(:counter, 1)
-  end,
-  "update!" => fn {cache, random} ->
-    cache.update!(random, 1, &Kernel.+(&1, 1))
-  end,
-  "get_and_update!" => fn {cache, random} ->
-    cache.get_and_update!(random, fn
-      nil -> {nil, 1}
-      val -> {val, val * 2}
-    end)
   end,
   "get_all!" => fn {cache, _random} ->
     cache.get_all!(in: [1, 2, 3, 4, 5, 6, 7, 8, 9])
