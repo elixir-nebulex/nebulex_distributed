@@ -1,6 +1,5 @@
 defmodule Nebulex.Adapters.MultilevelInclusiveTest do
   use Nebulex.NodeCase
-  use Mimic
 
   use Nebulex.CacheTestCase,
     except: [
@@ -16,6 +15,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
   use Nebulex.MultilevelQueryableTest
   use Nebulex.MultilevelInfoTest
 
+  import Mimic, only: [expect: 3]
   import Nebulex.CacheCase
   import Nebulex.Utils, only: [wrap_error: 2]
 
@@ -142,10 +142,16 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
       |> expect(:with_dynamic_cache, fn _, _ ->
         wrap_error Nebulex.KeyError, key: 3
       end)
+      |> expect(:with_dynamic_cache, fn _, _ ->
+        wrap_error Nebulex.Error, reason: :replication_failed
+      end)
 
       L2
       |> expect(:with_dynamic_cache, fn _, _ ->
         wrap_error Nebulex.KeyError, key: 3
+      end)
+      |> expect(:with_dynamic_cache, fn _, _ ->
+        {:ok, :infinity}
       end)
 
       L3
@@ -154,11 +160,6 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
       end)
       |> expect(:with_dynamic_cache, fn _, _ ->
         {:ok, :infinity}
-      end)
-
-      L1
-      |> expect(:with_dynamic_cache, fn _, _ ->
-        wrap_error Nebulex.Error, reason: :replication_failed
       end)
 
       assert_raise Nebulex.Error, ~r"command failed with reason: :replication_failed", fn ->

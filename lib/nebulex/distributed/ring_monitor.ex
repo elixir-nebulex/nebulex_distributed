@@ -1,7 +1,7 @@
-defmodule Nebulex.Adapters.Partitioned.RingMonitor do
+defmodule Nebulex.Distributed.RingMonitor do
   @moduledoc """
   A `GenServer` that keeps the consistent hash ring in sync with the
-  current cluster topology for `Nebulex.Adapters.Partitioned`.
+  current cluster topology for distributed Nebulex adapters.
 
   The RingMonitor is started automatically as part of the partitioned
   cache supervision tree. It performs the following duties:

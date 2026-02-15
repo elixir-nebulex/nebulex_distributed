@@ -1,14 +1,13 @@
 defmodule Nebulex.Adapters.CoherentCacheTest do
   use Nebulex.NodeCase
-  use Mimic
 
   # Inherit tests
   use Nebulex.CacheTestCase
 
+  import Nebulex.CacheCase
+
   alias Nebulex.Adapter
   alias Nebulex.Distributed.TestCache.{CoherentCache, CoherentNilCache}
-
-  import Nebulex.CacheCase
 
   @moduletag capture_log: true
 

@@ -1,6 +1,5 @@
 defmodule Nebulex.Adapters.PartitionedCacheTest do
   use Nebulex.NodeCase
-  use Mimic
 
   use Nebulex.CacheTestCase,
     except: [Nebulex.Cache.QueryableQueryErrorTest]
@@ -10,10 +9,11 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   use Nebulex.Distributed.TransactionTest
   use Nebulex.Adapters.PartitionedInfoStatsTest
 
+  import Mimic, only: [expect: 4, stub: 3]
+  import Nebulex.CacheCase
+
   alias Nebulex.{Adapter, Telemetry, Utils}
   alias Nebulex.Distributed.TestCache.{PartitionedCache, PartitionedNilCache}
-
-  import Nebulex.CacheCase
 
   @moduletag capture_log: true
 

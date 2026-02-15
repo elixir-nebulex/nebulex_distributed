@@ -4,7 +4,7 @@
 [Nebulex]: https://github.com/elixir-nebulex/nebulex
 
 ![CI](https://github.com/elixir-nebulex/nebulex_distributed/workflows/CI/badge.svg)
-[![Codecov](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)
+[![Codecov](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)](https://codecov.io/gh/elixir-nebulex/nebulex_distributed)
 [![Hex.pm](https://img.shields.io/hexpm/v/nebulex_distributed.svg)](https://hex.pm/packages/nebulex_distributed)
 [![Documentation](https://img.shields.io/badge/Documentation-ff69b4)](https://hexdocs.pm/nebulex_distributed)
 

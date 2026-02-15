@@ -111,7 +111,7 @@ defmodule Nebulex.Adapters.Partitioned do
 
   ### Ring Monitor
 
-  The `Nebulex.Adapters.Partitioned.RingMonitor` is a `GenServer` that:
+  The `Nebulex.Distributed.RingMonitor` is a `GenServer` that:
 
     1. **Subscribes to Cluster Changes**: Uses
       `Nebulex.Distributed.Cluster.monitor_scope/0` to subscribe to all

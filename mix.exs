@@ -70,7 +70,7 @@ defmodule NebulexDistributed.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.2", only: [:dev, :test]},
-      {:mimic, "~> 1.11", only: :test},
+      {:mimic, "~> 2.0", only: :test},
       {:ex2ms, "~> 1.7", only: :test},
 
       # Benchmark Test
@@ -78,7 +78,7 @@ defmodule NebulexDistributed.MixProject do
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
       # Usage Rules
-      {:usage_rules, "~> 1.0.0-rc.2", only: [:dev]},
+      {:usage_rules, "~> 1.0", only: [:dev]},
 
       # Docs
       {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
@@ -141,8 +141,8 @@ defmodule NebulexDistributed.MixProject do
         Utilities: [
           Nebulex.Distributed.Cluster,
           Nebulex.Distributed.RPC,
-          Nebulex.Distributed.Transaction,
-          Nebulex.Adapters.Partitioned.RingMonitor
+          Nebulex.Distributed.RingMonitor,
+          Nebulex.Distributed.Transaction
         ]
       ]
     ]
@@ -155,8 +155,8 @@ defmodule NebulexDistributed.MixProject do
       flags: [
         :unmatched_returns,
         :error_handling,
+        :extra_return,
         :no_opaque,
-        :unknown,
         :no_return
       ]
     ]

@@ -35,6 +35,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   for multi-node scenarios. Both adapters automatically coordinate locks across
   all cluster nodes without requiring manual `:nodes` configuration.
   [#5](https://github.com/elixir-nebulex/nebulex_distributed/issues/5).
+- [Nebulex.Distributed.RingMonitor] Moved the ring monitor from
+  `Nebulex.Adapters.Partitioned.RingMonitor` to
+  `Nebulex.Distributed.RingMonitor` to establish it as a shared distributed
+  utility. This keeps the implementation reusable by other distributed adapters
+  (including future replicated/invalidation-based adapters) while preserving
+  the existing partitioned adapter behavior and telemetry events.
 
 ## [v3.0.0-rc.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0-rc.2) (2025-12-07)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.1...v3.0.0-rc.2)

@@ -5,7 +5,7 @@ defmodule Nebulex.Adapters.Partitioned.Supervisor do
 
   import Nebulex.Utils
 
-  alias Nebulex.Adapters.Partitioned.RingMonitor
+  alias Nebulex.Distributed.RingMonitor
 
   ## API
 

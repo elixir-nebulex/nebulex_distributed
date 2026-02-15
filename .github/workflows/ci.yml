@@ -99,6 +99,10 @@ jobs:
           mix credo --strict
         if: ${{ matrix.lint }}
 
+      - name: Run sobelow
+        run: mix sobelow --skip --exit Low
+        if: ${{ matrix.sobelow }}
+
       - name: Run tests
         run: |
           epmd -daemon
@@ -117,10 +121,6 @@ jobs:
           fail_ci_if_error: true
           flags: unittests-elixir-${{ matrix.elixir }}-otp-${{ matrix.otp }}
         if: ${{ matrix.coverage }}
-
-      - name: Run sobelow
-        run: mix sobelow --skip --exit Low
-        if: ${{ matrix.sobelow }}
 
       - name: Restore PLT Cache
         uses: actions/cache@v3
