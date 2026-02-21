@@ -2,8 +2,7 @@ defmodule NebulexDistributed.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
-  @version "3.0.0-dev"
-  # @nbx_vsn "3.0.0"
+  @version "3.0.0"
 
   def project do
     [
@@ -59,8 +58,8 @@ defmodule NebulexDistributed.MixProject do
   defp deps do
     [
       nebulex_dep(),
-      {:nebulex_local, github: "elixir-nebulex/nebulex_local", branch: "main"},
-      {:nebulex_streams, github: "elixir-nebulex/nebulex_streams", branch: "main"},
+      {:nebulex_local, "~> 3.0"},
+      {:nebulex_streams, "~> 0.1"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
@@ -89,7 +88,7 @@ defmodule NebulexDistributed.MixProject do
     if path = System.get_env("NEBULEX_PATH") do
       {:nebulex, path: path, override: true}
     else
-      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main", override: true}
+      {:nebulex, "~> 3.0"}
     end
   end
 
