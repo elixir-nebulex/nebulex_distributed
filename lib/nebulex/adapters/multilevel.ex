@@ -31,6 +31,23 @@ defmodule Nebulex.Adapters.Multilevel do
   for frequently accessed data (served from L1) while maintaining large capacity
   through the L2 layer.
 
+  ```
+                     ┌──────────────┐
+                     │    Client    │
+                     └──────┬───────┘
+                            │
+                   ┌────────┴─────────┐
+                   │    L1 (Local)    │◄── Fast, limited size
+                   └────────┬─────────┘
+                            │
+                   ┌────────┴─────────┐
+                   │ L2 (Distributed) │◄── Slower, larger capacity
+                   └──────────────────┘
+
+  Read:  L1 → L2 (replicate back on hit, inclusive mode)
+  Write: L1 → L2 (write-through to all levels)
+  ```
+
   ### Cache Lookup (Read Operations)
 
   When you perform a **read operation** (e.g., `get`, `fetch`), the adapter

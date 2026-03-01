@@ -59,6 +59,23 @@ defmodule Nebulex.Adapters.Partitioned do
 
   [oracle-pcs]: https://docs.oracle.com/cd/E13924_01/coh.340/e13819/partitionedcacheservice.htm
 
+  ```
+                        ┌──────────────┐
+                        │    Client    │
+                        └──────┬───────┘
+                               │
+                        ┌──────┴───────┐
+                        │  Hash Ring   │
+                        └──────┬───────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+  ┌─────┴────────┐       ┌─────┴────────┐       ┌─────┴────────┐
+  │    Node A    │       │    Node B    │       │    Node C    │
+  │ Local Cache  │       │ Local Cache  │       │ Local Cache  │
+  └──────────────┘       └──────────────┘       └──────────────┘
+  ```
+
   ## Consistent Hashing and Key Distribution
 
   The adapter uses `ExHashRing` to implement consistent hashing, which maps keys

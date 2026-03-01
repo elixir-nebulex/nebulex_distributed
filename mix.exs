@@ -59,7 +59,7 @@ defmodule NebulexDistributed.MixProject do
     [
       nebulex_dep(),
       {:nebulex_local, "~> 3.0"},
-      {:nebulex_streams, "~> 0.1"},
+      {:nebulex_streams, "~> 0.2"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
