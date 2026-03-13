@@ -80,6 +80,36 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       **Default (30 seconds):** Works well for most use cases, balancing
       consistency and overhead.
       """
+    ],
+    node_filter: [
+      type: {:fun, 1},
+      required: false,
+      doc: """
+      An optional 1-arity function that filters which cluster nodes are
+      added to the hash ring. The function receives a node name
+      (`t:node/0`) and must return `true` to include the node in the
+      ring, or `false` to exclude it. Only nodes present in the ring
+      will be selected to cache data.
+
+      Excluded nodes are still part of the cache cluster (`:pg` group),
+      so the cache remains fully usable from them — reads, writes, and
+      all other operations work transparently, routing to ring nodes
+      as usual.
+
+      By default, all nodes that join the cluster are added to the
+      hash ring.
+
+      > #### Function Captures {: .info}
+      >
+      > Due to how anonymous functions are implemented in the Erlang VM,
+      > it is best to use function captures (`&Mod.fun/1`) as node filters.
+      > In other words, avoid using literal anonymous functions
+      > (`fn ... -> ... end`) or local function captures (`&my_filter/1`)
+      > as they cannot be serialized across distributed nodes.
+
+      See the ["Node Filter"](`Nebulex.Adapters.Partitioned#module-node-filter`)
+      section for more information and examples.
+      """
     ]
   ]
 

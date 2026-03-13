@@ -31,7 +31,7 @@ defmodule Nebulex.Adapters.Multilevel do
   for frequently accessed data (served from L1) while maintaining large capacity
   through the L2 layer.
 
-  ```
+  ```asciidoc
                      ┌──────────────┐
                      │    Client    │
                      └──────┬───────┘

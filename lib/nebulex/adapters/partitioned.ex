@@ -59,21 +59,21 @@ defmodule Nebulex.Adapters.Partitioned do
 
   [oracle-pcs]: https://docs.oracle.com/cd/E13924_01/coh.340/e13819/partitionedcacheservice.htm
 
-  ```
-                        ┌──────────────┐
-                        │    Client    │
-                        └──────┬───────┘
-                               │
-                        ┌──────┴───────┐
-                        │  Hash Ring   │
-                        └──────┬───────┘
-                               │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-  ┌─────┴────────┐       ┌─────┴────────┐       ┌─────┴────────┐
-  │    Node A    │       │    Node B    │       │    Node C    │
-  │ Local Cache  │       │ Local Cache  │       │ Local Cache  │
-  └──────────────┘       └──────────────┘       └──────────────┘
+  ```asciidoc
+                                ┌──────────────┐
+                                │    Client    │
+                                └──────┬───────┘
+                                       │
+                                ┌──────┴───────┐
+                                │  Hash Ring   │
+                                └──────┬───────┘
+                                       │
+                ┌──────────────────────┼──────────────────────┐
+                │                      │                      │
+          ┌─────┴────────┐       ┌─────┴────────┐       ┌─────┴────────┐
+          │    Node A    │       │    Node B    │       │    Node C    │
+          │ Local Cache  │       │ Local Cache  │       │ Local Cache  │
+          └──────────────┘       └──────────────┘       └──────────────┘
   ```
 
   ## Consistent Hashing and Key Distribution
@@ -479,6 +479,38 @@ defmodule Nebulex.Adapters.Partitioned do
   See `Nebulex.Distributed.Transaction` for more information about transaction
   options, behavior, retry policies, and performance considerations.
 
+  ## Node Filter
+
+  By default, every node that joins the cluster is added to the hash ring and
+  therefore is selected to cache data. The `:node_filter` option lets
+  you control which nodes are part of the ring.
+
+  This is useful when certain nodes in the cluster should act as **clients
+  only** — for example, background job runners, test nodes, or admin consoles
+  — that need to use the cache but should not store any data locally.
+
+  Excluded nodes are still part of the cache cluster, so the cache remains
+  fully usable from them — reads, writes, and all other operations work
+  transparently, routing to ring nodes as usual.
+
+  ### Example
+
+      # In your supervision tree
+      children = [
+        {MyApp.PartitionedCache, node_filter: &MyApp.NodeFilter.cache_node?/1},
+        ...
+      ]
+
+      # In your application code
+      defmodule MyApp.NodeFilter do
+        # Only nodes whose name starts with "cache@" will be part of the hash ring
+        def cache_node?(node) do
+          node
+          |> to_string()
+          |> String.starts_with?("cache@")
+        end
+      end
+
   ## Caveats of partitioned adapter
 
   For operations that receive anonymous functions as arguments, such as
@@ -654,7 +686,8 @@ defmodule Nebulex.Adapters.Partitioned do
       name: name,
       primary_name: primary_opts[:name],
       hash_ring: hash_ring,
-      rejoin_interval: Keyword.fetch!(opts, :rejoin_interval)
+      rejoin_interval: Keyword.fetch!(opts, :rejoin_interval),
+      node_filter: Keyword.get(opts, :node_filter)
     }
 
     # Prepare child spec

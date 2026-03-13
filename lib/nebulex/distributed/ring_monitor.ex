@@ -165,6 +165,7 @@ defmodule Nebulex.Distributed.RingMonitor do
     |> MapSet.difference(ring |> Cluster.ring_nodes() |> MapSet.new())
     |> MapSet.union(pids |> node_names() |> MapSet.new())
     |> MapSet.to_list()
+    |> filter_nodes(adapter_meta[:node_filter])
     |> for_ring_node(&Ring.add_node(ring, &1))
     |> then(&dispatch_telemetry_event(:nodes_added, adapter_meta, %{nodes: &1}))
   end
@@ -208,4 +209,7 @@ defmodule Nebulex.Distributed.RingMonitor do
 
     %{state | rejoin_timer_ref: rejoin_timer_ref}
   end
+
+  defp filter_nodes(nodes, nil), do: nodes
+  defp filter_nodes(nodes, fun) when is_function(fun, 1), do: Enum.filter(nodes, fun)
 end

@@ -33,7 +33,7 @@ defmodule Nebulex.Adapters.Coherent do
 
   ## How It Works
 
-  ```
+  ```asciidoc
   Node A                          Node B                          Node C
   ┌──────────────┐               ┌──────────────┐               ┌──────────────┐
   │ Local Cache  │               │ Local Cache  │               │ Local Cache  │

@@ -139,4 +139,14 @@ defmodule Nebulex.Distributed.TestCache do
 
     use Commons
   end
+
+  defmodule TestNodeSelector do
+    @moduledoc false
+
+    @doc "Excludes the primary test node from the ring."
+    def exclude_primary?(node), do: node != :"primary@127.0.0.1"
+
+    @doc "Excludes all nodes from the ring."
+    def exclude_all?(_node), do: false
+  end
 end
