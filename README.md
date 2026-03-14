@@ -38,7 +38,7 @@ the primary cache storage with the option `:primary_storage_adapter`.
 ```elixir
 def deps do
   [
-    {:nebulex_distributed, "~> 3.0"},
+    {:nebulex_distributed, "~> 3.1"},
     {:telemetry, "~> 0.4 or ~> 1.0"},  # For observability/telemetry support
     {:decorator, "~> 1.4"},            # For declarative caching
   ]

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v3.1.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.1.0) (2026-03-14)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0...v3.1.0)
+
+### Enhancements
+
+- [Nebulex.Adapters.Partitioned] Added new `:node_filter` start option that
+  controls which cluster nodes are added to the hash ring. Accepts a 1-arity
+  function receiving a node name and returning a boolean. Excluded nodes remain
+  part of the cache cluster and can use the cache transparently — operations
+  route to ring nodes as usual. Useful for background job runners, test nodes,
+  or admin consoles that should not cache data locally. By default, all nodes
+  are added to the ring (full backward compatibility).
+  [#7](https://github.com/elixir-nebulex/nebulex_distributed/issues/7).
+- [Nebulex.Adapters.Partitioned] Added ASCII topology diagram to the module
+  documentation.
+- [Nebulex.Adapters.Multilevel] Added ASCII topology diagram to the module
+  documentation.
+
 ## [v3.0.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.0.0) (2026-02-21)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0-rc.2...v3.0.0)
 
