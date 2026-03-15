@@ -849,6 +849,12 @@ defmodule Nebulex.Adapters.Multilevel do
 
   ## Nebulex.Adapter.Transaction
 
+  # Distributed adapters
+  @distributed_adapters [
+    Nebulex.Adapters.Partitioned,
+    Nebulex.Adapters.Replicated
+  ]
+
   @impl true
   def transaction(%{levels: levels} = adapter_meta, fun, opts) do
     {ml_opts, opts} = validate_ml_opts!(opts)
@@ -859,7 +865,7 @@ defmodule Nebulex.Adapters.Multilevel do
       levels
       |> levels(ml_opts)
       |> Enum.reduce([node()], fn %{name: name, cache: cache}, acc ->
-        if cache.__adapter__() in [Nebulex.Adapters.Partitioned, Nebulex.Adapters.Replicated] do
+        if cache.__adapter__() in @distributed_adapters do
           Cluster.pg_nodes(name || cache) ++ acc
         else
           acc

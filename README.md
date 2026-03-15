@@ -20,7 +20,8 @@ distributed topologies:
     topology.
   * [`Nebulex.Adapters.Coherent`][coherent] - Local cache with distributed
     invalidation via `Nebulex.Streams`.
-  * 🚧 `Nebulex.Adapters.Replicated` - Replicated cache topology (**WIP!**).
+  * [`Nebulex.Adapters.Replicated`][replicated] - Push-based replicated cache
+    topology.
 
 These adapters work more as wrappers for an existing local adapter and provide
 the distributed topology on top of it. You can optionally set the adapter for
@@ -29,6 +30,7 @@ the primary cache storage with the option `:primary_storage_adapter`.
 [partitioned]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Partitioned.html
 [multilevel]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Multilevel.html
 [coherent]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Coherent.html
+[replicated]: https://hexdocs.pm/nebulex_distributed/Nebulex.Adapters.Replicated.html
 
 ## Installation
 
@@ -110,6 +112,7 @@ Where `BENCH_TEST_FILE` can be any of:
   * `partitioned_bench.exs`: benchmark for the partitioned adapter using
     the `Nebulex.Adapters.Local` as primary storage.
   * `multilevel_bench.exs`: benchmark for the multilevel adapter.
+  * `replicated_bench.exs`: benchmark for the replicated adapter.
 
 ## Contributing
 

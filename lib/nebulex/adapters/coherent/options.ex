@@ -136,6 +136,24 @@ defmodule Nebulex.Adapters.Coherent.Options do
   # Start options schema
   @start_opts_schema NimbleOptions.new!(start_opts)
 
+  # Shared compile options
+  @shared_compile_opts compile_opts
+
+  # Shared start options
+  @shared_start_opts start_opts
+
+  ## Shared Options API
+
+  # coveralls-ignore-start
+
+  @spec shared_compile_opts() :: keyword()
+  def shared_compile_opts, do: @shared_compile_opts
+
+  @spec shared_start_opts() :: keyword()
+  def shared_start_opts, do: @shared_start_opts
+
+  # coveralls-ignore-stop
+
   ## Docs API
 
   # coveralls-ignore-start

@@ -1,5 +1,5 @@
 defmodule Nebulex.Adapters.MultilevelInclusiveTest do
-  use Nebulex.NodeCase
+  use Nebulex.NodeCase, async: true
 
   use Nebulex.CacheTestCase,
     except: [
@@ -449,7 +449,9 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
         )
 
       # check cluster nodes
-      assert L3.nodes(:multilevel_inclusive_l3) == [node, node()]
+      assert_eventually fn ->
+        assert L3.nodes(:multilevel_inclusive_l3) |> Enum.sort() == [node, node()] |> Enum.sort()
+      end
 
       kv_pairs = for k <- 1..100, do: {k, k}
 
@@ -461,7 +463,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
         end
       end)
 
-      :ok = stop_cache(:"node1@127.0.0.1", pid)
+      :ok = stop_cache(node, pid)
     end
   end
 end
