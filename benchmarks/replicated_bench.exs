@@ -7,7 +7,7 @@ Code.require_file("test/support/test_cache.ex")
 Code.require_file("test/support/test_cluster.ex")
 Code.require_file("test/support/node_case.ex")
 
-# Spawn remote nodes for realistic partitioning
+# Spawn remote nodes for realistic replication
 nodes = [:"node1@127.0.0.1", :"node2@127.0.0.1", :"node3@127.0.0.1"]
 Nebulex.TestCluster.spawn(nodes)
 
@@ -18,30 +18,36 @@ for node <- Node.list() do
   :rpc.block_call(node, Code, :require_file, [test_cache_path])
 end
 
-alias Nebulex.Distributed.TestCache.PartitionedCache
+alias Nebulex.Distributed.TestCache.ReplicatedCache
 alias Nebulex.NodeCase
 
 # Cache options
-cache_opts = [primary: [gc_interval: :timer.hours(1)]]
+cache_opts = [
+  primary: [gc_interval: :timer.hours(1)],
+  replication: [interval: 100]
+]
 
 # Start cache on the primary node and remote nodes
-{:ok, local} = PartitionedCache.start_link(cache_opts)
-node_pid_list = NodeCase.start_caches(Node.list(), [{PartitionedCache, cache_opts}])
+{:ok, local} = ReplicatedCache.start_link(cache_opts)
+node_pid_list = NodeCase.start_caches(Node.list(), [{ReplicatedCache, cache_opts}])
 
-# Wait for cluster formation
+# Wait for cluster formation and bootstrap
 :ok = Process.sleep(500)
 
-IO.puts("Cluster nodes: #{inspect(PartitionedCache.nodes())}")
+IO.puts("Cluster nodes: #{inspect(ReplicatedCache.nodes())}")
 
 # samples
 keys = Enum.to_list(1..10_000)
 bulk = for x <- 1..100, do: {x, x}
 
 # init caches
-Enum.each(1..5000, &PartitionedCache.put(&1, &1))
+Enum.each(1..5000, &ReplicatedCache.put(&1, &1))
+
+# Wait for initial replication
+:ok = Process.sleep(1000)
 
 inputs = %{
-  "Partitioned Cache" => PartitionedCache
+  "Replicated Cache" => ReplicatedCache
 }
 
 benchmarks = %{

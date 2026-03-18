@@ -3,9 +3,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
 
   use Supervisor
 
-  alias Nebulex.Adapters.Replicated.ClusterMonitor
-  alias Nebulex.Streams
-  alias Nebulex.Streams.Invalidator
+  alias Nebulex.Adapters.Replicated.{ClusterMonitor, Replicator}
 
   ## API
 
@@ -17,24 +15,27 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
   ## Supervisor callback
 
   @impl true
-  def init({cache, adapter_meta, primary_opts, stream_opts}) do
-    # Get the primary cache module
+  def init({cache, adapter_meta, primary_opts, buffer_opts}) do
     primary = cache.__primary__()
-
-    # Common options
-    common_opts =
-      primary_opts
-      |> Keyword.take([:name])
-      |> Keyword.put(:cache, primary)
-
-    # Build stream options - register with primary cache since it's started first
-    stream_opts =
-      Keyword.merge(stream_opts, [broadcast_fun: :broadcast_from] ++ common_opts)
 
     children = [
       {primary, primary_opts},
-      {Streams, stream_opts},
-      {Invalidator, common_opts},
+      Supervisor.child_spec(
+        {PartitionedBuffer.Map,
+         Keyword.merge(buffer_opts,
+           name: adapter_meta.inbox,
+           processor: {Replicator, :process_inbox, [adapter_meta]}
+         )},
+        id: adapter_meta.inbox
+      ),
+      Supervisor.child_spec(
+        {PartitionedBuffer.Map,
+         Keyword.merge(buffer_opts,
+           name: adapter_meta.outbox,
+           processor: {Replicator, :process_outbox, [adapter_meta]}
+         )},
+        id: adapter_meta.outbox
+      ),
       {ClusterMonitor, adapter_meta}
     ]
 

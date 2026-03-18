@@ -140,6 +140,26 @@ defmodule Nebulex.Distributed.TestCache do
     use Commons
   end
 
+  defmodule LazyReplicatedCache do
+    @moduledoc false
+    use Nebulex.Cache,
+      otp_app: :nebulex_distributed,
+      adapter: Nebulex.Adapters.LazyReplicated,
+      adapter_opts: [primary_storage_adapter: Nebulex.Adapters.Local]
+
+    use Commons
+  end
+
+  defmodule LazyReplicatedNilCache do
+    @moduledoc false
+    use Nebulex.Cache,
+      otp_app: :nebulex_distributed,
+      adapter: Nebulex.Adapters.LazyReplicated,
+      adapter_opts: [primary_storage_adapter: Nebulex.Adapters.Nil]
+
+    use Commons
+  end
+
   defmodule ReplicatedCache do
     @moduledoc false
     use Nebulex.Cache,

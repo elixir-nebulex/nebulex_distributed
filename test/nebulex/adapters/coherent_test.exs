@@ -1,5 +1,5 @@
 defmodule Nebulex.Adapters.CoherentCacheTest do
-  use Nebulex.NodeCase
+  use Nebulex.NodeCase, async: true
 
   # Inherit tests
   use Nebulex.CacheTestCase

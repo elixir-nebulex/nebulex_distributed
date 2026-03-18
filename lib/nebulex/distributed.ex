@@ -26,11 +26,13 @@ defmodule Nebulex.Distributed do
       other nodes delete stale entries and fetch fresh data on
       the next read.
 
-    * 🚧 `Nebulex.Adapters.Replicated` - Replicated cache topology
-      where every node holds an identical copy of the entire cache.
-      Writes are broadcast to all nodes so data is immediately
-      available locally on every member of the cluster. **Planned
-      for a future release.**
+    * 🚧 `Nebulex.Adapters.LazyReplicated` - Lazy-pull replicated cache
+      topology. Writes trigger invalidation events across the cluster;
+      cache misses transparently pull data from peer nodes.
+
+    * 🚧 `Nebulex.Adapters.Replicated` - Push-based replicated cache
+      topology where writes are eagerly replicated to all nodes via
+      buffered RPC. **Planned for a future release.**
 
   ## Choosing an Adapter
 

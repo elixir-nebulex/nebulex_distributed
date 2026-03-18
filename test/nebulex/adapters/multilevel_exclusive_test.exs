@@ -1,5 +1,5 @@
 defmodule Nebulex.Adapters.MultilevelExclusiveTest do
-  use Nebulex.NodeCase
+  use Nebulex.NodeCase, async: true
 
   use Nebulex.CacheTestCase,
     except: [

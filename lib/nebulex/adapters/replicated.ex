@@ -1,117 +1,128 @@
 defmodule Nebulex.Adapters.Replicated do
   @moduledoc """
-  Adapter module for the replicated cache topology using lazy-pull replication.
+  Adapter module for the replicated cache topology using push-based replication.
 
   ## Features
 
-    * Replicated cache topology with lazy-pull replication.
-    * Zero-latency local reads for cached data.
-    * Automatic cache invalidation via `Nebulex.Streams`.
-    * On-demand data replication: cache misses pull from peer nodes
-      transparently.
-    * Trivial node joins: new nodes start with an empty cache and fill
-      lazily as reads come in.
+    * Replicated cache topology with eager push-based replication.
+    * Zero-latency local reads — all data is replicated on every node.
+    * Writes are applied locally and replicated to all peers via buffered RPC.
+    * Double-buffered outbox and inbox for high-throughput batched replication.
+    * "Newer version wins" conflict resolution via monotonic versioning.
     * Configurable primary storage adapter.
 
   ## Replicated Cache Topology
 
-  The replicated adapter provides a "local cache with distributed invalidation
-  and lazy-pull replication" pattern. Each node maintains its own local cache.
-  Writes trigger invalidation events across the cluster, and cache misses
-  transparently pull data from peer nodes.
+  The replicated adapter provides an "eager push replication" pattern. Each
+  node maintains its own local cache. Writes are applied locally first, then
+  batched and pushed to all peer nodes via RPC. On the receiving side, an
+  inbox buffer applies remote commands to the local primary cache using
+  "newer version wins" semantics.
 
   Key characteristics:
 
     * _**Local Storage**_: Each node has a local cache. All read operations
-      are served directly from the local cache when the data is available,
-      with no network overhead.
+      are served directly from the local cache with no network overhead.
 
-    * _**Distributed Invalidation**_: When a cache entry is modified (inserted,
-      updated, or deleted), an event is broadcast to all nodes in the cluster.
-      Other nodes invalidate (delete) that entry from their local caches.
+    * _**Push-Based Replication**_: When a cache entry is modified, the
+      change is buffered in an outbox and periodically pushed to all peer
+      nodes in a single batched RPC call.
 
-    * _**Lazy-Pull Replication**_: On a cache miss (after invalidation or on
-      a new node), the adapter transparently pulls the data from a peer node
-      that has it, caches it locally, and returns it. Over time, frequently
-      accessed data naturally replicates across all nodes.
+    * _**Conflict Resolution**_: Uses monotonic versioning with "newer
+      version wins" semantics. Concurrent writes to the same key are
+      resolved deterministically.
 
-    * _**Eventual Consistency**_: After invalidation, the next read on other
-      nodes triggers a pull from a peer, ensuring the latest value propagates
-      across the cluster.
-
-    * _**Write-Invalidate Protocol**_: Only invalidation events are broadcast
-      on writes, not the actual values. Data is only transferred when needed
-      (on cache misses), minimizing network overhead.
+    * _**Double-Buffered I/O**_: Both outbox (sending) and inbox (receiving)
+      use double-buffered ETS tables for zero-downtime processing — writes
+      continue while the previous batch is being processed.
 
   ## How It Works
 
-  ```
-  Node A                          Node B                          Node C
-  ┌──────────────┐               ┌──────────────┐               ┌──────────────┐
-  │ Local Cache  │               │ Local Cache  │               │ Local Cache  │
-  └──────┬───────┘               └──────┬───────┘               └──────┬───────┘
-         │                              │                              │
-         └──────────────┬───────────────┴──────────────┬───────────────┘
-                        │                              │
-                 ┌──────┴──────┐                ┌──────┴──────┐
-                 │   Streams   │◄──────────────►│ Invalidator │
-                 │  (PubSub)   │                │  (Workers)  │
-                 └─────────────┘                └─────────────┘
+  ```ascii
+          Node A                      Node B                        Node C
+    ┌───────────────┐           ┌───────────────┐             ┌───────────────┐
+    │  Local Cache  │           │  Local Cache  │             │  Local Cache  │
+    │   (primary)   │           │   (primary)   │             │   (primary)   │
+    └──┬─────────┬──┘           └──┬─────────┬──┘             └──┬─────────┬──┘
+       │         │                 │         │                   │         │
+       ▼         ▼                 ▼         ▼                   ▼         ▼
+  ┌────────┐ ┌────────┐       ┌────────┐ ┌────────┐        ┌────────┐ ┌────────┐
+  │ Inbox  │ │ Outbox │       │ Inbox  │ │ Outbox │        │ Inbox  │ │ Outbox │
+  └────────┘ └───┬────┘       └───▲────┘ └────────┘        └───▲────┘ └────────┘
+                 │                │                            │
+                 │ replicate ->   │                            │
+                 └────────────────┘────────────────────────────┘
+                  Batched RPC from Node A Outbox to peer Inboxes
+
+  Example: put on Node A
+
+    Client ── put("k", "v") ──▶ Node A Local Cache (write locally)
+                                     │
+                                     ├──▶ Inbox (tagged :local, skip on process)
+                                     └──▶ Outbox (buffered)
+                                               │
+                                          flush cycle
+                                               │
+                              ┌────────────────┼────────────────┐
+                              ▼                                 ▼
+                         Node B Inbox                      Node C Inbox
+                        (tagged :remote)                  (tagged :remote)
+                              │                                 │
+                         process cycle                     process cycle
+                              │                                 │
+                              ▼                                 ▼
+                        Node B Cache                       Node C Cache
+                       put("k", "v")                      put("k", "v")
   ```
 
   ### Write flow
 
     1. Node A modifies a cache entry (e.g., `Cache.put("key", value)`).
-    2. The local cache stores the value and emits a cache event.
-    3. `Nebulex.Streams` broadcasts the event via Phoenix.PubSub.
-    4. The `Nebulex.Streams.Invalidator` on Nodes B and C receives the event.
-    5. The Invalidator deletes "key" from the local caches on B and C.
+    2. The value is written to the local primary cache immediately.
+    3. The command is written to the inbox (tagged `:local`, for conflict
+       resolution) and to the outbox.
+    4. On the next outbox flush cycle, all buffered commands are sent to
+       peer inbox buffers via a single `RPC.multicall` with `put_all`.
+    5. On each peer, the inbox applies remote commands to the local
+       primary cache (skipping `:local` entries).
 
   ### Read flow
 
     1. Node B reads "key" from its local cache.
     2. If hit → return immediately (zero latency).
-    3. If miss → pull from a peer node via RPC, cache locally, and return.
-    4. If no peer has it → return cache miss (application handles via
-       cache-aside pattern).
+    3. If miss → return cache miss (data hasn't been replicated yet or
+       was evicted locally).
 
-  ### Node join
+  ### Node join (bootstrap)
 
-    1. New node joins the `:pg` group, starts receiving invalidation events.
-    2. Cache starts empty — data fills in lazily as reads come in.
-    3. No bulk sync, no write blocking, no special join protocol.
+    1. New node joins the `:pg` group.
+    2. The `ClusterMonitor` discovers existing peers and bootstraps data
+       from one of them by streaming all entries (with their TTLs) into
+       the local inbox.
+    3. If bootstrapping from a peer fails, the next peer is tried until
+       one succeeds or all peers are exhausted.
+    4. After bootstrap, new writes propagate automatically via the
+       normal replication flow.
 
   ## When to Use
 
   The replicated adapter is ideal for:
 
     * _**Read-Heavy Workloads**_: Maximum read performance since all reads
-      are served locally after the first pull.
-    * _**Clusters Where Most Nodes Read the Same Data**_: Lazy replication
-      naturally distributes hot data to all nodes that need it.
-    * _**Scenarios Where Node Joins Must Not Block Writes**_: New nodes
-      start empty and fill on demand.
-    * _**When Eventual Consistency Is Acceptable**_: It's a cache — stale
-      data expires or gets invalidated.
-
-  ## Comparison with Other Adapters
-
-  | Aspect | Replicated | Coherent | Partitioned |
-  |--------|-----------|----------|-------------|
-  | Read (hit) | Local (zero latency) | Local (zero latency) | RPC to owner node |
-  | Read (miss) | Pull from peer, then local | Miss → app fetches from SoR | RPC to owner node |
-  | Write | Local + invalidation broadcast | Local + invalidation broadcast | RPC to owner node |
-  | Node join | Empty, fills on demand | Empty, fills on demand | Full ring sync |
-  | Data location | Replicated on demand | Independent per node | Sharded across nodes |
-  | Consistency | Eventual | Eventual | Strong (single owner) |
-  | Network overhead | Low (invalidation + pull on miss) | Low (only invalidations) | Medium (data transfer) |
+      are served locally.
+    * _**Small to Medium Datasets**_: Data that fits in memory on every
+      node.
+    * _**Low-Latency Write Propagation**_: Writes are batched and pushed
+      eagerly, minimizing the consistency window.
+    * _**When Eventual Consistency Is Acceptable**_: There is a small
+      window between a write and its replication to peers.
 
   ## Primary Storage Adapter
 
   This adapter depends on a local cache adapter (primary storage), adding a
-  distributed invalidation layer with lazy-pull replication on top of it. You
-  don't need to manually define the primary storage cache; the adapter
-  initializes it automatically as part of the supervision tree.
+  push-based replication layer on top of it. You don't need to manually
+  define the primary storage cache; the adapter initializes it automatically
+  as part of the supervision tree.
 
   The `:primary_storage_adapter` option (defaults to `Nebulex.Adapters.Local`)
   configures which adapter to use for the local storage. Options for the
@@ -151,8 +162,9 @@ defmodule Nebulex.Adapters.Replicated do
           gc_interval: :timer.hours(12),
           max_size: 1_000_000
         ],
-        stream_opts: [
-          partitions: System.schedulers_online()
+        replication: [
+          interval: :timer.seconds(1),
+          batch_size: 1_000
         ]
 
   Add the cache to your supervision tree:
@@ -175,23 +187,6 @@ defmodule Nebulex.Adapters.Replicated do
 
   #{Nebulex.Adapters.Replicated.Options.start_options_docs()}
 
-  ## Shared runtime options
-
-  When using the replicated adapter, all of the cache functions outlined in
-  `Nebulex.Cache` accept the following options:
-
-  #{Nebulex.Adapters.Replicated.Options.common_runtime_options_docs()}
-
-  ## Telemetry Events
-
-  Since the replicated adapter depends on the configured primary storage cache
-  (which uses a local cache adapter), this one will also emit Telemetry events.
-  Additionally, `Nebulex.Streams` and `Nebulex.Streams.Invalidator` emit their
-  own telemetry events for monitoring the invalidation process.
-
-  See the [Telemetry guide](https://hexdocs.pm/nebulex/telemetry.html) and
-  `Nebulex.Streams` documentation for more information.
-
   ## Extended API
 
   This adapter provides some additional convenience functions to the
@@ -213,28 +208,149 @@ defmodule Nebulex.Adapters.Replicated do
 
       MyCache.leave_cluster()
 
+  ## Telemetry events
+
+  Since the replicated adapter depends on the configured primary storage
+  cache (which uses a local cache adapter), this one will also emit Telemetry
+  events. Therefore, there will be events emitted by the replicated adapter
+  as well as the primary storage cache. For example, the cache defined before
+  `MyApp.ReplicatedCache` will emit the following events:
+
+    * `[:my_app, :replicated_cache, :command, :start]`
+    * `[:my_app, :replicated_cache, :primary, :command, :start]`
+    * `[:my_app, :replicated_cache, :command, :stop]`
+    * `[:my_app, :replicated_cache, :primary, :command, :stop]`
+    * `[:my_app, :replicated_cache, :command, :exception]`
+    * `[:my_app, :replicated_cache, :primary, :command, :exception]`
+
+  As you may notice, the telemetry prefix by default for the cache is
+  `[:my_app, :replicated_cache]`. However, you could specify the
+  `:telemetry_prefix` for the primary storage within the `:primary` options
+  (if you want to override the default). See the
+  [Telemetry guide](https://hexdocs.pm/nebulex/telemetry.html)
+  for more information and examples.
+
+  ## Adapter-specific telemetry events
+
+  The replication process emits the following Telemetry span events when
+  flushing buffered commands to peer nodes:
+
+    * `telemetry_prefix ++ [:replication, :start]` - Dispatched when a
+      replication batch starts being sent to peer nodes.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peers: [atom]
+        }
+        ```
+
+    * `telemetry_prefix ++ [:replication, :stop]` - Dispatched when a
+      replication batch completes (successfully or with errors).
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peers: [atom],
+          errors: [{term, atom}]
+        }
+        ```
+
+    * `telemetry_prefix ++ [:replication, :exception]` - Dispatched when a
+      replication batch raises an exception.
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peers: [atom],
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+        ```
+
+  The `:errors` field in the `:stop` metadata is a list of `{error, node}`
+  tuples for each peer node that failed to receive the replication batch.
+  An empty list indicates all peers were updated successfully. When errors
+  occur, the replicator retries failed nodes up to `:retries` times with
+  a `:retry_delay` between attempts (see `:replication` options).
+
+  ### Bootstrap events
+
+  When a node joins the cluster and bootstraps data from an existing peer,
+  the following Telemetry span events are emitted:
+
+    * `telemetry_prefix ++ [:bootstrap, :start]` - Dispatched when
+      bootstrap starts copying entries from a peer.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom
+        }
+        ```
+
+    * `telemetry_prefix ++ [:bootstrap, :stop]` - Dispatched when
+      bootstrap completes successfully.
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom,
+          total: non_neg_integer
+        }
+        ```
+
+    * `telemetry_prefix ++ [:bootstrap, :exception]` - Dispatched when
+      bootstrap from a peer raises an exception (the next peer will be
+      tried).
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom,
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+        ```
+
   ## Caveats
 
-    * _**Eventual Consistency Window**_: There is a latency between when a write
-      occurs on one node and when the invalidation is processed on other nodes.
-      During this window, other nodes may serve stale data. The duration depends
-      on network latency and PubSub message delivery. For most use cases this is
-      negligible, but time-sensitive applications should account for this.
+    * _**Replication Latency**_: There is a window (up to the
+      `:interval` replication option) between when a write occurs on
+      one node and when it is replicated to peers. During this window,
+      peers may serve stale data.
 
-    * _**First Read After Invalidation**_: The first read on a remote node after
-      invalidation incurs a network hop to pull the data from a peer. Subsequent
-      reads are local. This trade-off enables trivial node joins and eliminates
-      write-time replication overhead.
+    * _**Memory Usage**_: Every node holds a full copy of the cache. This
+      topology is best suited for datasets that fit in memory on all nodes.
 
-    * _**Memory Usage**_: Over time, frequently accessed data replicates to all
-      nodes that read it. Memory usage depends on each node's access patterns
-      and the primary adapter's configuration (e.g., `:max_size`, `:gc_interval`).
-
-    * _**Queryable Operations**_: Only `get_all(in: [k1, k2, ...])` triggers
-      lazy-pull replication for missing keys. General queries
-      (`get_all(query: nil)`, `count_all`, `delete_all`, `stream`) operate on
-      the local cache only — merging arbitrary query results from all peers is
-      not practical.
+    * _**Queryable Operations**_: General queries (`get_all`, `count_all`,
+      `delete_all`, `stream`) operate on the local cache only.
 
   """
 
@@ -252,7 +368,7 @@ defmodule Nebulex.Adapters.Replicated do
 
   alias __MODULE__.Options
   alias Nebulex.Adapter
-  alias Nebulex.Distributed.{Cluster, RPC}
+  alias Nebulex.Distributed.Cluster
 
   ## Nebulex.Adapter
 
@@ -273,8 +389,6 @@ defmodule Nebulex.Adapters.Replicated do
         use Nebulex.Cache,
           otp_app: unquote(otp_app),
           adapter: unquote(primary)
-
-        use Nebulex.Streams
       end
 
       @doc """
@@ -346,127 +460,138 @@ defmodule Nebulex.Adapters.Replicated do
         do: [name: camelize_and_concat([name, Primary])] ++ primary_opts,
         else: primary_opts
 
-    # Stream options
-    stream_opts = Keyword.fetch!(opts, :stream_opts)
+    # Replication options
+    replication_opts = Keyword.fetch!(opts, :replication)
+
+    # Buffer options
+    buffer_opts =
+      replication_opts
+      |> Keyword.take([:partitions])
+      |> Keyword.merge(
+        processing_interval_ms: Keyword.fetch!(replication_opts, :interval),
+        processing_batch_size: Keyword.fetch!(replication_opts, :batch_size)
+      )
 
     # PG group name for cluster membership
     pg_group = camelize_and_concat([name, PG])
+
+    # Buffer names
+    inbox = camelize_and_concat([name, Inbox])
+    outbox = camelize_and_concat([name, Outbox])
 
     # Prepare metadata
     adapter_meta = %{
       telemetry_prefix: telemetry_prefix,
       telemetry: telemetry,
+      cache: cache,
       name: name,
       primary_name: primary_opts[:name],
-      pg_group: pg_group
+      pg_group: pg_group,
+      inbox: inbox,
+      outbox: outbox,
+      replication_timeout: Keyword.fetch!(replication_opts, :timeout),
+      replication_retries: Keyword.fetch!(replication_opts, :retries),
+      replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay)
     }
 
     # Prepare child spec
     child_spec =
       Supervisor.child_spec(
-        {Nebulex.Adapters.Replicated.Supervisor, {cache, adapter_meta, primary_opts, stream_opts}},
+        {__MODULE__.Supervisor, {cache, adapter_meta, primary_opts, buffer_opts}},
         id: {__MODULE__, name}
       )
 
     {:ok, child_spec, adapter_meta}
   end
 
-  ## Nebulex.Adapter.KV — Read callbacks with pull-from-peers
+  ## Nebulex.Adapter.KV — Read callbacks (local only)
 
   @impl true
   def fetch(adapter_meta, key, opts) do
-    with {:error, %Nebulex.KeyError{}} = e <- with_dynamic_cache(adapter_meta, :fetch, [key, opts]),
-         {:ok, {value, _ttl}} <- pull_and_cache(adapter_meta, key, opts, e) do
-      {:ok, value}
-    end
-  end
-
-  @impl true
-  def take(adapter_meta, key, opts) do
-    with {:error, %Nebulex.KeyError{}} = e <- with_dynamic_cache(adapter_meta, :take, [key, opts]),
-         {:ok, {value, _ttl}} <- rpc_first_peer(adapter_meta, key, opts, e) do
-      {:ok, value}
-    end
+    with_dynamic_cache(adapter_meta, :fetch, [key, opts])
   end
 
   @impl true
   def has_key?(adapter_meta, key, opts) do
-    with {:ok, false} <- with_dynamic_cache(adapter_meta, :has_key?, [key, opts]) do
-      init_acc = wrap_error Nebulex.KeyError, key: key
-
-      case pull_and_cache(adapter_meta, key, opts, init_acc) do
-        {:ok, _} -> {:ok, true}
-        {:error, %Nebulex.KeyError{}} -> {:ok, false}
-      end
-    end
+    with_dynamic_cache(adapter_meta, :has_key?, [key, opts])
   end
 
   @impl true
   def ttl(adapter_meta, key, opts) do
-    with {:error, %Nebulex.KeyError{}} = e <- with_dynamic_cache(adapter_meta, :ttl, [key, opts]),
-         {:ok, {_value, ttl}} <- pull_and_cache(adapter_meta, key, opts, e) do
-      {:ok, ttl}
-    end
+    with_dynamic_cache(adapter_meta, :ttl, [key, opts])
   end
 
-  ## Nebulex.Adapter.KV — Write callbacks (delegate to local primary + invalidation)
+  ## Nebulex.Adapter.KV — Write callbacks (local + replicate)
 
   @impl true
   def put(adapter_meta, key, value, on_write, ttl, keep_ttl?, opts) do
     primary_opts = Keyword.merge(opts, ttl: ttl, keep_ttl: keep_ttl?)
 
-    do_put(on_write, adapter_meta, key, value, primary_opts)
-  end
+    with {:ok, true} = ok <- do_put(on_write, adapter_meta, key, value, primary_opts) do
+      :ok = replicate(adapter_meta, key, {:put, [key, value, primary_opts]})
 
-  defp do_put(:put, adapter_meta, key, value, primary_opts) do
-    with :ok <- with_dynamic_cache(adapter_meta, :put, [key, value, primary_opts]) do
-      {:ok, true}
+      ok
     end
-  end
-
-  defp do_put(:put_new, adapter_meta, key, value, primary_opts) do
-    with_dynamic_cache(adapter_meta, :put_new, [key, value, primary_opts])
-  end
-
-  defp do_put(:replace, adapter_meta, key, value, primary_opts) do
-    with_dynamic_cache(adapter_meta, :replace, [key, value, primary_opts])
   end
 
   @impl true
   def put_all(adapter_meta, entries, on_write, ttl, opts) do
     primary_opts = Keyword.put(opts, :ttl, ttl)
 
-    do_put_all(on_write, adapter_meta, entries, primary_opts)
-  end
+    with {:ok, true} = ok <- do_put_all(on_write, adapter_meta, entries, primary_opts) do
+      Enum.each(entries, fn {key, value} ->
+        :ok = replicate(adapter_meta, key, {:put, [key, value, primary_opts]})
+      end)
 
-  defp do_put_all(:put, adapter_meta, entries, primary_opts) do
-    with :ok <- with_dynamic_cache(adapter_meta, :put_all, [entries, primary_opts]) do
-      {:ok, true}
+      ok
     end
-  end
-
-  defp do_put_all(:put_new, adapter_meta, entries, primary_opts) do
-    with_dynamic_cache(adapter_meta, :put_new_all, [entries, primary_opts])
   end
 
   @impl true
   def delete(adapter_meta, key, opts) do
-    with_dynamic_cache(adapter_meta, :delete, [key, opts])
+    with :ok <- with_dynamic_cache(adapter_meta, :delete, [key, opts]) do
+      replicate(adapter_meta, key, {:delete, [key, opts]})
+    end
+  end
+
+  @impl true
+  def take(adapter_meta, key, opts) do
+    with {:ok, _value} = ok <- with_dynamic_cache(adapter_meta, :take, [key, opts]) do
+      :ok = replicate(adapter_meta, key, {:delete, [key, opts]})
+
+      ok
+    end
   end
 
   @impl true
   def expire(adapter_meta, key, ttl, opts) do
-    with_dynamic_cache(adapter_meta, :expire, [key, ttl, opts])
+    with {:ok, true} = ok <- with_dynamic_cache(adapter_meta, :expire, [key, ttl, opts]) do
+      :ok = replicate(adapter_meta, key, {:expire, [key, ttl, opts]})
+
+      ok
+    end
   end
 
   @impl true
   def touch(adapter_meta, key, opts) do
-    with_dynamic_cache(adapter_meta, :touch, [key, opts])
+    with {:ok, true} = ok <- with_dynamic_cache(adapter_meta, :touch, [key, opts]) do
+      :ok = replicate(adapter_meta, key, {:touch, [key, opts]})
+
+      ok
+    end
   end
 
   @impl true
   def update_counter(adapter_meta, key, amount, default, ttl, opts) do
-    with_dynamic_cache(adapter_meta, :incr, [key, amount, [ttl: ttl, default: default] ++ opts])
+    primary_opts = [ttl: ttl, default: default] ++ opts
+
+    with {:ok, value} = ok <-
+           with_dynamic_cache(adapter_meta, :incr, [key, amount, primary_opts]) do
+      replicate_opts = Keyword.delete(primary_opts, :default)
+      :ok = replicate(adapter_meta, key, {:put, [key, value, replicate_opts]})
+
+      ok
+    end
   end
 
   ## Nebulex.Adapter.Queryable
@@ -474,19 +599,27 @@ defmodule Nebulex.Adapters.Replicated do
   @impl true
   def execute(adapter_meta, query, opts)
 
-  def execute(adapter_meta, %{op: :get_all, query: {:in, keys}, select: select}, opts)
-      when is_list(keys) do
-    # Always query locally with {:key, :value} to know which keys are present
-    kv_query = [in: keys, select: {:key, :value}]
+  def execute(adapter_meta, %{op: :delete_all, query: {:in, [_ | _] = keys}} = query, opts) do
+    query = build_query(query)
 
-    with {:ok, local_kv} <- with_dynamic_cache(adapter_meta, :get_all, [kv_query, opts]) do
-      local_keys = Enum.map(local_kv, &elem(&1, 0))
-      missing_keys = keys -- local_keys
+    with {:ok, count} = ok when count > 0 <-
+           with_dynamic_cache(adapter_meta, :delete_all, [query, opts]) do
+      Enum.each(keys, fn key ->
+        :ok = replicate(adapter_meta, key, {:delete, [key, opts]})
+      end)
 
-      pulled_kv = pull_missing_keys(adapter_meta, missing_keys, opts)
-      all_kv = local_kv ++ pulled_kv
+      ok
+    end
+  end
 
-      {:ok, select_from_kv(all_kv, select)}
+  def execute(adapter_meta, %{op: :delete_all} = query, opts) do
+    query = build_query(query)
+
+    with {:ok, count} = ok when count > 0 <-
+           with_dynamic_cache(adapter_meta, :delete_all, [query, opts]) do
+      :ok = replicate(adapter_meta, :all, {:delete_all, [query, opts]})
+
+      ok
     end
   end
 
@@ -540,20 +673,31 @@ defmodule Nebulex.Adapters.Replicated do
     end)
   end
 
-  @doc """
-  Fetches the value and TTL for a key from the local primary cache.
+  ## Private functions
 
-  Called via RPC from peer nodes during lazy-pull replication. Returns
-  `{:ok, {value, ttl}}` on hit or `{:error, %Nebulex.KeyError{}}` on miss.
-  """
-  def fetch_with_ttl(adapter_meta, key, opts) do
-    with {:ok, value} <- with_dynamic_cache(adapter_meta, :fetch, [key, opts]),
-         {:ok, ttl} <- with_dynamic_cache(adapter_meta, :ttl, [key, opts]) do
-      {:ok, {value, ttl}}
+  defp do_put(:put, adapter_meta, key, value, primary_opts) do
+    with :ok <- with_dynamic_cache(adapter_meta, :put, [key, value, primary_opts]) do
+      {:ok, true}
     end
   end
 
-  ## Private Functions
+  defp do_put(:put_new, adapter_meta, key, value, primary_opts) do
+    with_dynamic_cache(adapter_meta, :put_new, [key, value, primary_opts])
+  end
+
+  defp do_put(:replace, adapter_meta, key, value, primary_opts) do
+    with_dynamic_cache(adapter_meta, :replace, [key, value, primary_opts])
+  end
+
+  defp do_put_all(:put, adapter_meta, entries, primary_opts) do
+    with :ok <- with_dynamic_cache(adapter_meta, :put_all, [entries, primary_opts]) do
+      {:ok, true}
+    end
+  end
+
+  defp do_put_all(:put_new, adapter_meta, entries, primary_opts) do
+    with_dynamic_cache(adapter_meta, :put_new_all, [entries, primary_opts])
+  end
 
   defp build_query(%{select: select, query: query}) do
     query = with {:q, q} <- query, do: {:query, q}
@@ -561,60 +705,14 @@ defmodule Nebulex.Adapters.Replicated do
     [query, select: select]
   end
 
-  defp pull_and_cache(adapter_meta, key, opts, init_acc) do
-    with {:ok, {value, ttl}} <- rpc_first_peer(adapter_meta, key, opts, init_acc) do
-      # Cache locally by writing directly to the primary adapter
-      # (not through the write path) to avoid triggering
-      # an invalidation broadcast. Use the original TTL from the peer.
-      _ = with_dynamic_cache(adapter_meta, :put, [key, value, [ttl: ttl] ++ opts])
+  defp replicate(%{inbox: inbox, outbox: outbox}, key, command) do
+    # Generate a version for the command
+    version = System.monotonic_time()
 
-      {:ok, {value, ttl}}
-    end
+    # Write to inbox tagged :local (for conflict resolution, won't re-apply)
+    :ok = PartitionedBuffer.Map.put_newer(inbox, key, {command, :local}, version)
+
+    # Write to outbox (no origin tag, will be tagged :remote on delivery)
+    :ok = PartitionedBuffer.Map.put_newer(outbox, key, command, version)
   end
-
-  defp rpc_first_peer(%{pg_group: pg_group} = adapter_meta, key, opts, init_acc) do
-    # Validate common runtime options
-    opts = Options.validate_common_runtime_opts!(opts)
-    timeout = Keyword.fetch!(opts, :timeout)
-
-    pg_group
-    # Get the list of cache nodes
-    |> Cluster.pg_nodes()
-    # Delete the current node from the list
-    |> List.delete(node())
-    # Shuffle the list of nodes
-    |> Enum.shuffle()
-    # Call peer nodes until one returns a hit
-    |> Enum.reduce_while(init_acc, fn peer, acc ->
-      RPC.call(
-        peer,
-        __MODULE__,
-        :fetch_with_ttl,
-        [adapter_meta, key, opts],
-        timeout
-      )
-      |> case do
-        {:ok, _} = hit ->
-          {:halt, hit}
-
-        _error ->
-          {:cont, acc}
-      end
-    end)
-  end
-
-  defp pull_missing_keys(adapter_meta, keys, opts) do
-    Enum.reduce(keys, [], fn key, acc ->
-      init_acc = wrap_error Nebulex.KeyError, key: key
-
-      case pull_and_cache(adapter_meta, key, opts, init_acc) do
-        {:ok, {value, _ttl}} -> [{key, value} | acc]
-        _ -> acc
-      end
-    end)
-  end
-
-  defp select_from_kv(kv_list, {:key, :value}), do: kv_list
-  defp select_from_kv(kv_list, :key), do: Enum.map(kv_list, &elem(&1, 0))
-  defp select_from_kv(kv_list, :value), do: Enum.map(kv_list, &elem(&1, 1))
 end
