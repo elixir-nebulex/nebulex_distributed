@@ -39,7 +39,7 @@ defmodule Nebulex.Distributed.RingMonitor do
   alias Nebulex.Telemetry
 
   # State
-  defstruct adapter_meta: nil, ring: nil, pg_ref: nil, rejoin_interval: nil, rejoin_timer_ref: nil
+  defstruct [:adapter_meta, :ring, :pg_ref, :rejoin_interval, :rejoin_timer_ref]
 
   ## API
 

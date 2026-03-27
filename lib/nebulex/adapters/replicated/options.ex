@@ -75,6 +75,21 @@ defmodule Nebulex.Adapters.Replicated.Options do
       Maps to the `:partitions` option of `PartitionedBuffer.Map`.
       Defaults to `System.schedulers_online()`.
       """
+    ],
+    anti_entropy_interval: [
+      type: :pos_integer,
+      required: false,
+      doc: """
+      Interval in milliseconds between anti-entropy reconciliation
+      cycles. When set, a background process periodically picks a
+      random peer, compares bucket-hashed Merkle digests of the local
+      and remote caches, and repairs only the divergent keys by
+      writing them through the inbox (preserving "newer version wins"
+      semantics).
+
+      Disabled by default (not present). Set to a positive integer
+      to enable, e.g., `:timer.minutes(1)`.
+      """
     ]
   ]
 
