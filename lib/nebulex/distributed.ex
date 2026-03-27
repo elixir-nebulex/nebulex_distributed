@@ -26,22 +26,20 @@ defmodule Nebulex.Distributed do
       other nodes delete stale entries and fetch fresh data on
       the next read.
 
-    * 🚧 `Nebulex.Adapters.Replicated` - Replicated cache topology
-      where every node holds an identical copy of the entire cache.
-      Writes are broadcast to all nodes so data is immediately
-      available locally on every member of the cluster. **Planned
-      for a future release.**
+    * `Nebulex.Adapters.Replicated` - Push-based replicated cache
+      topology where writes are eagerly replicated to all nodes via
+      buffered RPC.
 
   ## Choosing an Adapter
 
-  | Aspect              | Partitioned          | Multilevel            | Coherent               |
-  |---------------------|----------------------|-----------------------|------------------------|
-  | Data location       | Sharded across nodes | L1 local + L2 shared  | Independent per node   |
-  | Read performance    | Network hop required | L1 fast, L2 slower    | Fastest (pure local)   |
-  | Write behavior      | Remote write to owner| Write through levels  | Local + invalidation   |
-  | Consistency         | Strong (single owner)| Varies by config      | Eventual               |
-  | Network overhead    | Medium               | Medium to high        | Low (invalidations)    |
-  | Best for            | Large datasets       | Tiered access patterns| Read-heavy workloads   |
+  | Aspect              | Partitioned          | Multilevel            | Coherent               | Replicated                |
+  |---------------------|----------------------|-----------------------|------------------------|---------------------------|
+  | Data location       | Sharded across nodes | L1 local + L2 shared  | Independent per node   | Full copy on every node   |
+  | Read performance    | Network hop required | L1 fast, L2 slower    | Fastest (pure local)   | Fastest (pure local)      |
+  | Write behavior      | Remote write to owner| Write through levels  | Local + invalidation   | Local + push to all peers |
+  | Consistency         | Strong (single owner)| Varies by config      | Eventual               | Eventual                  |
+  | Network overhead    | Medium               | Medium to high        | Low (invalidations)    | Medium (batched RPCs)     |
+  | Best for            | Large datasets       | Tiered access patterns| Read-heavy workloads   | Read-heavy, small datasets|
 
   ## Installation
 

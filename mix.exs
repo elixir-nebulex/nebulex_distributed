@@ -61,6 +61,7 @@ defmodule NebulexDistributed.MixProject do
       {:nebulex_local, "~> 3.0"},
       {:nebulex_streams, "~> 0.2"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
+      {:partitioned_buffer, "~> 0.4"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
       # Test & Code Analysis
@@ -135,7 +136,8 @@ defmodule NebulexDistributed.MixProject do
         "Built-in adapters": [
           Nebulex.Adapters.Coherent,
           Nebulex.Adapters.Multilevel,
-          Nebulex.Adapters.Partitioned
+          Nebulex.Adapters.Partitioned,
+          Nebulex.Adapters.Replicated
         ],
         Utilities: [
           Nebulex.Distributed.Cluster,

@@ -314,35 +314,40 @@ defmodule Nebulex.Adapters.Coherent do
 
   @impl true
   def put(adapter_meta, key, value, on_write, ttl, keep_ttl?, opts) do
-    primary_opts = [ttl: ttl, keep_ttl: keep_ttl?] ++ opts
+    primary_opts = Keyword.merge(opts, ttl: ttl, keep_ttl: keep_ttl?)
 
-    case on_write do
-      :put ->
-        with :ok <- with_dynamic_cache(adapter_meta, :put, [key, value, primary_opts]) do
-          {:ok, true}
-        end
+    do_put(on_write, adapter_meta, key, value, primary_opts)
+  end
 
-      :put_new ->
-        with_dynamic_cache(adapter_meta, :put_new, [key, value, primary_opts])
-
-      :replace ->
-        with_dynamic_cache(adapter_meta, :replace, [key, value, primary_opts])
+  defp do_put(:put, adapter_meta, key, value, primary_opts) do
+    with :ok <- with_dynamic_cache(adapter_meta, :put, [key, value, primary_opts]) do
+      {:ok, true}
     end
+  end
+
+  defp do_put(:put_new, adapter_meta, key, value, primary_opts) do
+    with_dynamic_cache(adapter_meta, :put_new, [key, value, primary_opts])
+  end
+
+  defp do_put(:replace, adapter_meta, key, value, primary_opts) do
+    with_dynamic_cache(adapter_meta, :replace, [key, value, primary_opts])
   end
 
   @impl true
   def put_all(adapter_meta, entries, on_write, ttl, opts) do
-    primary_opts = [ttl: ttl] ++ opts
+    primary_opts = Keyword.put(opts, :ttl, ttl)
 
-    case on_write do
-      :put ->
-        with :ok <- with_dynamic_cache(adapter_meta, :put_all, [entries, primary_opts]) do
-          {:ok, true}
-        end
+    do_put_all(on_write, adapter_meta, entries, primary_opts)
+  end
 
-      :put_new ->
-        with_dynamic_cache(adapter_meta, :put_new_all, [entries, primary_opts])
+  defp do_put_all(:put, adapter_meta, entries, primary_opts) do
+    with :ok <- with_dynamic_cache(adapter_meta, :put_all, [entries, primary_opts]) do
+      {:ok, true}
     end
+  end
+
+  defp do_put_all(:put_new, adapter_meta, entries, primary_opts) do
+    with_dynamic_cache(adapter_meta, :put_new_all, [entries, primary_opts])
   end
 
   @impl true

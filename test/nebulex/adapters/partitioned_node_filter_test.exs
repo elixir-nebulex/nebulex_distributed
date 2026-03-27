@@ -1,5 +1,5 @@
 defmodule Nebulex.Adapters.PartitionedNodeFilterTest do
-  use Nebulex.NodeCase
+  use Nebulex.NodeCase, async: true
 
   import Nebulex.CacheCase
 

@@ -1,6 +1,7 @@
 defmodule Nebulex.Adapters.PartitionedCacheTest do
-  use Nebulex.NodeCase
+  use Nebulex.NodeCase, async: true
 
+  # Inherit tests
   use Nebulex.CacheTestCase,
     except: [Nebulex.Cache.QueryableQueryErrorTest]
 
