@@ -9,6 +9,7 @@ defmodule Nebulex.Adapters.Replicated do
     * Writes are applied locally and replicated to all peers via buffered RPC.
     * Double-buffered outbox and inbox for high-throughput batched replication.
     * "Newer version wins" conflict resolution via monotonic versioning.
+    * Optional anti-entropy reconciliation to detect and repair data drift.
     * Configurable primary storage adapter.
 
   ## Replicated Cache Topology
@@ -344,6 +345,99 @@ defmodule Nebulex.Adapters.Replicated do
         }
         ```
 
+  ### Anti-entropy events
+
+  When anti-entropy reconciliation is enabled (`:anti_entropy_interval`),
+  the following Telemetry span events are emitted each cycle:
+
+    * `telemetry_prefix ++ [:anti_entropy, :start]` - Dispatched when
+      an anti-entropy cycle starts.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom
+        }
+        ```
+
+    * `telemetry_prefix ++ [:anti_entropy, :stop]` - Dispatched when
+      an anti-entropy cycle completes.
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom,
+          repaired: non_neg_integer,
+          divergent_buckets: non_neg_integer
+        }
+        ```
+
+    * `telemetry_prefix ++ [:anti_entropy, :exception]` - Dispatched when
+      an anti-entropy cycle raises an exception (e.g., RPC failure to the
+      selected peer).
+
+      * Measurements: `%{duration: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          peer: atom,
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+        ```
+
+  ## Anti-Entropy Reconciliation
+
+  The replicated adapter supports optional anti-entropy reconciliation
+  to detect and repair data drift between nodes. This can happen after
+  missed replication batches (e.g., brief network partitions or node
+  outages).
+
+  When enabled via `:anti_entropy_interval`, a background process runs
+  periodically on each node:
+
+    1. Picks a random peer.
+    2. Builds a bucket-hashed digest (1024 fixed buckets, XOR of key/value
+       hashes) of the local cache.
+    3. Fetches the peer's digest via RPC.
+    4. Compares digests to find divergent buckets.
+    5. For divergent buckets, fetches the peer's actual entries (with TTLs).
+    6. Writes them through the inbox, preserving "newer version wins"
+       conflict resolution.
+
+  This approach is based on the anti-entropy reconciliation technique
+  originally described in the Amazon Dynamo paper (DeCandia et al., 2007)
+  and widely adopted by distributed databases like Apache Cassandra and
+  Riak. The specific implementation follows Riak's Active Anti-Entropy
+  (AAE) design most closely: instead of building a full Merkle tree over
+  individual keys (expensive to build and compare), keys are hashed into
+  a fixed number of buckets and each bucket stores the XOR of its
+  key/value hashes. This bucket-based approach provides precise
+  divergence detection with minimal overhead — only the entries in
+  divergent buckets need to be fetched and compared.
+
+  ### Configuration
+
+      config :my_app, MyApp.ReplicatedCache,
+        replication: [
+          interval: :timer.seconds(1),
+          anti_entropy_interval: :timer.minutes(1)
+        ]
+
+  Omit `:anti_entropy_interval` to disable (default).
+
   ## Caveats
 
     * _**Replication Latency**_: There is a window (up to the
@@ -497,7 +591,8 @@ defmodule Nebulex.Adapters.Replicated do
       outbox: outbox,
       replication_timeout: Keyword.fetch!(replication_opts, :timeout),
       replication_retries: Keyword.fetch!(replication_opts, :retries),
-      replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay)
+      replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay),
+      anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval)
     }
 
     # Prepare child spec

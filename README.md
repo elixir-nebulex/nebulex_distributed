@@ -1,7 +1,5 @@
 # Nebulex Distributed :spider_web:
-> Distributed cache topologies adapters for [Nebulex][Nebulex].
-
-[Nebulex]: https://github.com/elixir-nebulex/nebulex
+> Distributed caching adapters for Nebulex.
 
 ![CI](https://github.com/elixir-nebulex/nebulex_distributed/workflows/CI/badge.svg)
 [![Codecov](https://codecov.io/gh/elixir-nebulex/nebulex_distributed/graph/badge.svg)](https://codecov.io/gh/elixir-nebulex/nebulex_distributed)

@@ -24,7 +24,7 @@ defmodule NebulexDistributed.MixProject do
 
       # Hex
       package: package(),
-      description: "Distributed cache topologies adapters for Nebulex",
+      description: "Distributed caching adapters for Nebulex",
 
       # Docs
       name: "Nebulex.Distributed",
