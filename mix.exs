@@ -2,7 +2,7 @@ defmodule NebulexDistributed.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_distributed"
-  @version "3.1.0"
+  @version "3.2.0"
 
   def project do
     [
@@ -120,7 +120,7 @@ defmodule NebulexDistributed.MixProject do
       ],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE*)
+      files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE* AGENTS.md)
     ]
   end
 

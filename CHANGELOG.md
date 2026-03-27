@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v3.2.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.0) (2026-03-27)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.1.0...v3.2.0)
+
+### Enhancements
+
+- [Nebulex.Adapters.Replicated] Added new push-based replicated cache adapter.
+  Provides a replicated cache topology where each node maintains a full local
+  copy of the cache. Writes are applied locally first, then batched and pushed
+  to all peer nodes via RPC using double-buffered outbox/inbox
+  (`PartitionedBuffer.Map`). Features include:
+  - Zero-latency local reads — all data is replicated on every node.
+  - "Newer version wins" conflict resolution via monotonic versioning.
+  - Bootstrap on node join with TTL streaming from an existing peer, with
+    fallback to the next peer on failure.
+  - GC interval reset after bootstrap (when primary is
+    `Nebulex.Adapters.Local`) to synchronize generation rotation.
+  - Configurable replication options: `:interval`, `:batch_size`, `:timeout`,
+    `:retries`, `:retry_delay`, `:partitions`.
+  - Telemetry spans for replication and bootstrap events.
+  [#4](https://github.com/elixir-nebulex/nebulex_distributed/issues/4).
+- [Nebulex.Adapters.Replicated] Added optional anti-entropy reconciliation to
+  detect and repair data drift between nodes after missed replication batches.
+  Enabled via the `:anti_entropy_interval` replication option. The implementation
+  follows Riak's Active Anti-Entropy (AAE) approach: keys are hashed into 1024
+  fixed buckets with XOR fingerprints, a random peer is compared each cycle, and
+  only divergent entries are repaired through the inbox preserving "newer version
+  wins" semantics. Emits Telemetry span events for monitoring.
+  [#12](https://github.com/elixir-nebulex/nebulex_distributed/issues/12).
+
 ## [v3.1.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.1.0) (2026-03-14)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.0.0...v3.1.0)
 
