@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v3.2.1](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.1) (2026-03-28)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.2.0...v3.2.1)
+
+### Fixed
+
+- [Nebulex.Adapters.Replicated] Replaced pull-based bootstrap with push-based
+  bootstrap. Existing nodes now detect new node joins via
+  `:pg.monitor_scope/1` and push their cache entries using `:put_new` commands,
+  avoiding the overwrite problem where the bootstrapping node's timestamp was
+  always newer than prior write versions. A simple leader election (smallest
+  node name) ensures exactly one node pushes, and anti-entropy repairs any
+  gaps.
+  [#14](https://github.com/elixir-nebulex/nebulex_distributed/issues/14).
+- [Nebulex.Adapters.Replicated] Switched conflict resolution versioning from
+  `System.monotonic_time()` to `System.system_time()`. Monotonic time has a
+  per-node epoch and cannot be compared across nodes, causing incorrect
+  "newer version wins" resolution when nodes have different uptimes.
+  Wall-clock time (Unix epoch) is directly comparable across
+  NTP-synchronised nodes.
+  [#14](https://github.com/elixir-nebulex/nebulex_distributed/issues/14).
+
 ## [v3.2.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.0) (2026-03-27)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.1.0...v3.2.0)
 
