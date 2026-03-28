@@ -174,7 +174,7 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
           )
 
         # Write to inbox — "newer version wins" handles conflicts
-        version = System.monotonic_time()
+        version = System.system_time()
 
         inbox_entries =
           Enum.map(peer_entries, fn {key, command} ->

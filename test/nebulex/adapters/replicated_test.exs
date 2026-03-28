@@ -8,7 +8,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
   import Nebulex.CacheCase
 
   alias Nebulex.Adapter
-  alias Nebulex.Adapters.Replicated.{AntiEntropy, Replicator}
+  alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
   alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{ReplicatedCache, ReplicatedNilCache}
   alias Nebulex.Telemetry
@@ -84,6 +84,28 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
   describe "cluster membership" do
     test "nodes returns all cluster nodes", %{nodes: nodes} do
       assert ReplicatedCache.nodes() |> Enum.sort() == Enum.sort(nodes)
+    end
+
+    test "cluster monitor updates cluster view on PG leave event" do
+      cm_name = Utils.camelize_and_concat([@cache_name, "ClusterMonitor"])
+      cm_pid = Process.whereis(cm_name)
+
+      # Get the current state to extract pg_ref and pg_group
+      %{pg_ref: pg_ref, pg_group: pg_group, cluster_nodes: cluster_nodes} =
+        :sys.get_state(cm_pid)
+
+      assert MapSet.size(cluster_nodes) > 0
+
+      # Simulate a PG leave event for a fake node
+      fake_pid = self()
+      send(cm_pid, {pg_ref, :leave, pg_group, [fake_pid]})
+
+      # Allow the message to be processed
+      :ok = Process.sleep(50)
+
+      # Verify the cluster view was updated (current node removed)
+      %{cluster_nodes: updated_nodes} = :sys.get_state(cm_pid)
+      refute MapSet.member?(updated_nodes, node())
     end
 
     test "join and leave cluster", %{nodes: nodes, name: name} do
@@ -402,7 +424,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       fake_node = :"nonexistent@127.0.0.1"
 
       entries = [
-        {:fail_key, {{:put, [:fail_key, "value", []]}, :remote}, System.monotonic_time()}
+        {:fail_key, {{:put, [:fail_key, "value", []]}, :remote}, System.system_time()}
       ]
 
       with_telemetry_handler __MODULE__, [stopped], fn ->
@@ -416,53 +438,92 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
     end
   end
 
-  describe "bootstrap on node join" do
-    test "copy_entries copies data with TTL from a remote peer", %{cluster: cluster} do
+  describe "bootstrap on node join (inverted bootstrap)" do
+    test "push_entries pushes data with TTL to a remote peer", %{cluster: cluster} do
       adapter_meta = Adapter.lookup_meta(@cache_name)
       remote_node = find_remote_node(cluster)
 
-      # Put data directly on the remote node's primary (bypass replication)
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ce_key1, "value1", []]
-      ])
+      # Put data locally
+      assert ReplicatedCache.put(:pe_key1, "value1") == :ok
+      assert ReplicatedCache.put(:pe_key2, "value2", ttl: :timer.seconds(60)) == :ok
+      assert ReplicatedCache.put(:pe_key3, "value3") == :ok
 
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ce_key2, "value2", [ttl: :timer.seconds(60)]]
-      ])
+      # Push entries to the remote peer using put_new
+      assert Replicator.push_entries(remote_node, adapter_meta) >= 3
 
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ce_key3, "value3", []]
-      ])
-
-      # Copy entries from the remote peer into the local inbox
-      assert Replicator.copy_entries(remote_node, adapter_meta) >= 3
-
-      # Wait for inbox processing
+      # Wait for the remote node to process entries
       assert_eventually fn ->
-        assert ReplicatedCache.get_all!(in: [:ce_key1, :ce_key2, :ce_key3]) ==
-                 %{ce_key1: "value1", ce_key2: "value2", ce_key3: "value3"}
+        result =
+          :rpc.call(remote_node, ReplicatedCache, :get_all!, [
+            @cache_name,
+            [in: [:pe_key1, :pe_key2, :pe_key3]],
+            []
+          ])
+
+        assert result == %{pe_key1: "value1", pe_key2: "value2", pe_key3: "value3"}
       end
 
-      # Verify TTL was preserved for ce_key2
+      # Verify TTL was preserved for pe_key2
       assert_eventually fn ->
-        ttl = ReplicatedCache.ttl!(:ce_key2)
+        {:ok, ttl} =
+          :rpc.call(remote_node, ReplicatedCache, :ttl, [@cache_name, :pe_key2, nil, []])
 
         assert is_integer(ttl) and ttl > 0 and ttl <= :timer.seconds(60)
       end
     end
 
-    test "copy_entries returns 0 when peer has no data", %{cluster: cluster} do
+    test "push_entries returns 0 when local cache has no data" do
+      adapter_meta = Adapter.lookup_meta(@cache_name)
+      fake_node = :"nonexistent@127.0.0.1"
+
+      # No data locally, push_entries should return 0 without making any RPC
+      assert Replicator.push_entries(fake_node, adapter_meta) == 0
+    end
+
+    test "push_entries does not overwrite existing data on target (put_new semantics)",
+         %{cluster: cluster} do
       adapter_meta = Adapter.lookup_meta(@cache_name)
       remote_node = find_remote_node(cluster)
 
-      # Remote node has no data, copy_entries should return 0
-      assert Replicator.copy_entries(remote_node, adapter_meta) == 0
+      # Put data on the remote node directly (simulating data received via replication)
+      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
+        adapter_meta,
+        :put,
+        [:pn_existing, "remote_value", []]
+      ])
+
+      # Put a different value locally for the same key
+      assert ReplicatedCache.put(:pn_existing, "local_value") == :ok
+
+      # Push entries to the remote peer — should NOT overwrite remote_value
+      assert Replicator.push_entries(remote_node, adapter_meta) >= 1
+
+      # Remote node should still have the original value (put_new is a no-op)
+      assert_eventually fn ->
+        result =
+          :rpc.call(remote_node, ReplicatedCache, :get!, [
+            @cache_name,
+            :pn_existing,
+            nil,
+            []
+          ])
+
+        assert result == "remote_value"
+      end
+    end
+
+    test "apply_bootstrap_entries writes entries to local cache" do
+      adapter_meta = Adapter.lookup_meta(@cache_name)
+
+      entries = [
+        {:ab_key1, {:put_new, [:ab_key1, "value1", [ttl: :infinity]]}},
+        {:ab_key2, {:put_new, [:ab_key2, "value2", [ttl: :timer.seconds(60)]]}}
+      ]
+
+      assert Replicator.apply_bootstrap_entries(adapter_meta, entries) == :ok
+
+      assert ReplicatedCache.get!(:ab_key1) == "value1"
+      assert ReplicatedCache.get!(:ab_key2) == "value2"
     end
 
     test "stream_entries skips entries when TTL lookup fails" do
@@ -491,7 +552,10 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert entries_map[:skip_key2] == {:put, [:skip_key2, "value2", [ttl: :infinity]]}
     end
 
-    test "new node bootstraps data from an existing peer", %{name: name, cluster: cluster} do
+    test "new node receives data from existing peers via inverted bootstrap", %{
+      name: name,
+      cluster: cluster
+    } do
       # Put some data with and without TTL
       assert ReplicatedCache.put(:bs_key1, "value1") == :ok
       assert ReplicatedCache.put(:bs_key2, "value2", ttl: :timer.seconds(60)) == :ok
@@ -502,14 +566,13 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         assert result == "value1"
       end)
 
-      # Stop the cache on the primary (current) node so bootstrap runs locally
-      # (ensures coverage of stream_entries and bootstrap logic)
+      # Stop the cache on the primary (current) node
       :ok = ReplicatedCache.stop()
 
-      # Restart the cache — should bootstrap from a peer
+      # Restart the cache — existing peers should detect the join and push entries
       {:ok, _pid} = ReplicatedCache.start_link(name: name, replication: [interval: 100])
 
-      # Wait for bootstrap + inbox processing
+      # Wait for inverted bootstrap (existing nodes push) + processing
       assert_eventually fn ->
         assert ReplicatedCache.get_all!(in: [:bs_key1, :bs_key2, :bs_key3]) ==
                  %{bs_key1: "value1", bs_key2: "value2", bs_key3: "value3"}
@@ -524,6 +587,32 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
       # Cleanup: stop the restarted cache
       :ok = ReplicatedCache.stop()
+    end
+
+    test "bootstrap emits telemetry span events", %{cluster: cluster} do
+      adapter_meta = Adapter.lookup_meta(@cache_name)
+      remote_node = find_remote_node(cluster)
+
+      # Put data locally
+      assert ReplicatedCache.put(:bs_tel1, "value1") == :ok
+
+      started = @telemetry_prefix ++ [:bootstrap, :start]
+      stopped = @telemetry_prefix ++ [:bootstrap, :stop]
+
+      with_telemetry_handler __MODULE__, [started, stopped], fn ->
+        # Call push_to_new_node directly (local node pushes to remote)
+        ClusterMonitor.push_to_new_node(remote_node, adapter_meta)
+
+        assert_receive {^started, %{system_time: _},
+                        %{adapter_meta: _, node: pusher, peer: ^remote_node}},
+                       5000
+
+        assert pusher == node()
+
+        assert_receive {^stopped, %{duration: _}, %{adapter_meta: _, total: total}}, 5000
+
+        assert is_integer(total) and total >= 1
+      end
     end
   end
 

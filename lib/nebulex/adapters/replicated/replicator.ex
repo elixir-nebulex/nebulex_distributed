@@ -28,30 +28,37 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
   end
 
   @doc false
-  def copy_entries(node, adapter_meta) do
-    RPC.call(
-      node,
-      __MODULE__,
-      :stream_entries,
-      [adapter_meta],
-      adapter_meta.replication_timeout
-    )
-    |> case do
+  def push_entries(target_node, adapter_meta) do
+    case stream_entries(adapter_meta) do
       [] ->
         0
 
       entries ->
-        version = System.monotonic_time()
-
-        inbox_entries =
-          Enum.map(entries, fn {key, command} ->
-            {key, {command, :remote}, version}
+        # Convert :put to :put_new for bootstrap — only write if key doesn't
+        # exist on the target node, preserving any data it already received
+        # via normal replication.
+        bootstrap_entries =
+          Enum.map(entries, fn {key, {:put, args}} ->
+            {key, {:put_new, args}}
           end)
 
-        :ok = PartitionedBuffer.Map.put_all_newer(adapter_meta.inbox, inbox_entries)
+        RPC.call(
+          target_node,
+          __MODULE__,
+          :apply_bootstrap_entries,
+          [adapter_meta, bootstrap_entries],
+          adapter_meta.replication_timeout
+        )
 
         Enum.count(entries)
     end
+  end
+
+  @doc false
+  def apply_bootstrap_entries(adapter_meta, entries) do
+    Enum.each(entries, fn {_key, {op, args}} ->
+      Replicated.with_dynamic_cache(adapter_meta, op, args)
+    end)
   end
 
   @doc false

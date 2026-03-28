@@ -8,7 +8,7 @@ defmodule Nebulex.Adapters.Replicated do
     * Zero-latency local reads — all data is replicated on every node.
     * Writes are applied locally and replicated to all peers via buffered RPC.
     * Double-buffered outbox and inbox for high-throughput batched replication.
-    * "Newer version wins" conflict resolution via monotonic versioning.
+    * "Newer version wins" conflict resolution via wall-clock versioning.
     * Optional anti-entropy reconciliation to detect and repair data drift.
     * Configurable primary storage adapter.
 
@@ -29,9 +29,11 @@ defmodule Nebulex.Adapters.Replicated do
       change is buffered in an outbox and periodically pushed to all peer
       nodes in a single batched RPC call.
 
-    * _**Conflict Resolution**_: Uses monotonic versioning with "newer
-      version wins" semantics. Concurrent writes to the same key are
-      resolved deterministically.
+    * _**Conflict Resolution**_: Uses wall-clock versioning
+      (`System.system_time()`) with "newer version wins" semantics.
+      Timestamps are comparable across nodes (assuming NTP sync),
+      so concurrent writes to the same key are resolved correctly
+      regardless of which node originated the write.
 
     * _**Double-Buffered I/O**_: Both outbox (sending) and inbox (receiving)
       are backed by `PartitionedBuffer.Map`, which provides double-buffered
@@ -96,19 +98,30 @@ defmodule Nebulex.Adapters.Replicated do
     3. If miss → return cache miss (data hasn't been replicated yet or
        was evicted locally).
 
-  ### Node join (bootstrap)
+  ### Node join (push-based bootstrap)
+
+  When a new node joins the cluster, **existing nodes push data to it**
+  rather than the new node pulling from a peer. This avoids the
+  overwrite problem inherent in pull-based bootstrap, where the
+  bootstrapping node's timestamp would be newer than any prior write
+  version, potentially overwriting more recent data.
 
     1. New node joins the `:pg` group.
-    2. The `ClusterMonitor` discovers existing peers and bootstraps data
-       from one of them by streaming all entries (with their TTLs) into
-       the local inbox.
-    3. If bootstrapping from a peer fails, the next peer is tried until
-       one succeeds or all peers are exhausted.
-    4. If the primary storage adapter is `Nebulex.Adapters.Local`, the GC
-       interval is reset on all cluster nodes to synchronize generation
-       rotation and prevent premature eviction of bootstrapped data.
-    5. After bootstrap, new writes propagate automatically via the
-       normal replication flow.
+    2. All existing `ClusterMonitor` processes receive the `:join` event
+       via `:pg.monitor_scope/1`.
+    3. A simple leader election (smallest node name by Erlang term
+       ordering) ensures exactly one existing node pushes data,
+       avoiding duplicate work.
+    4. The leader streams its local cache entries to the new node via
+       RPC, using `:put_new` commands — entries are written only if
+       the key does not already exist on the new node, preserving any
+       data it received via normal replication in the meantime.
+    5. If the primary storage adapter is `Nebulex.Adapters.Local`, the
+       new node resets the GC interval on all cluster nodes to
+       synchronize generation rotation and prevent premature eviction.
+    6. After bootstrap, new writes propagate automatically via the
+       normal replication flow. Anti-entropy reconciliation (if enabled)
+       repairs any entries missed during bootstrap.
 
   ## When to Use
 
@@ -295,11 +308,12 @@ defmodule Nebulex.Adapters.Replicated do
 
   ### Bootstrap events
 
-  When a node joins the cluster and bootstraps data from an existing peer,
-  the following Telemetry span events are emitted:
+  When a new node joins the cluster and an existing node pushes data to it
+  (push-based bootstrap), the following Telemetry span events are emitted on
+  the pushing node:
 
     * `telemetry_prefix ++ [:bootstrap, :start]` - Dispatched when
-      bootstrap starts copying entries from a peer.
+      an existing node starts pushing entries to a newly joined node.
 
       * Measurements: `%{system_time: non_neg_integer}`
       * Metadata:
@@ -313,7 +327,7 @@ defmodule Nebulex.Adapters.Replicated do
         ```
 
     * `telemetry_prefix ++ [:bootstrap, :stop]` - Dispatched when
-      bootstrap completes successfully.
+      the bootstrap push completes successfully.
 
       * Measurements: `%{duration: non_neg_integer}`
       * Metadata:
@@ -328,8 +342,7 @@ defmodule Nebulex.Adapters.Replicated do
         ```
 
     * `telemetry_prefix ++ [:bootstrap, :exception]` - Dispatched when
-      bootstrap from a peer raises an exception (the next peer will be
-      tried).
+      the bootstrap push raises an exception.
 
       * Measurements: `%{duration: non_neg_integer}`
       * Metadata:
@@ -807,8 +820,9 @@ defmodule Nebulex.Adapters.Replicated do
   end
 
   defp replicate(%{inbox: inbox, outbox: outbox}, key, command) do
-    # Generate a version for the command
-    version = System.monotonic_time()
+    # Wall-clock version so that timestamps are comparable across nodes
+    # (monotonic_time has a per-node epoch and cannot be compared cross-node).
+    version = System.system_time()
 
     # Write to inbox tagged :local (for conflict resolution, won't re-apply)
     :ok = PartitionedBuffer.Map.put_newer(inbox, key, {command, :local}, version)
