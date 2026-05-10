@@ -549,7 +549,9 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
       # skip_key1 should be filtered out, skip_key2 should be present
       refute Map.has_key?(entries_map, :skip_key1)
-      assert entries_map[:skip_key2] == {:put, [:skip_key2, "value2", [ttl: :infinity]]}
+
+      assert entries_map[:skip_key2] ==
+               {:put, [:skip_key2, "value2", [ttl: :infinity, telemetry: false]]}
     end
 
     test "new node receives data from existing peers via inverted bootstrap", %{

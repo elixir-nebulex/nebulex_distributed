@@ -90,6 +90,18 @@ defmodule Nebulex.Adapters.Replicated.Options do
       Disabled by default (not present). Set to a positive integer
       to enable, e.g., `:timer.minutes(1)`.
       """
+    ],
+    bootstrap_chunk_size: [
+      type: :pos_integer,
+      required: false,
+      default: 1_000,
+      doc: """
+      Number of entries to push per RPC call when an existing node
+      bootstraps a newly joined peer. The local cache is streamed and
+      shipped chunk-by-chunk, bounding peak heap usage on both sender
+      and receiver regardless of the total cache size. Smaller values
+      reduce peak memory; larger values reduce RPC overhead.
+      """
     ]
   ]
 

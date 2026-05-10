@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- [Nebulex.Adapters.Replicated] Fixed excessive heap usage during bootstrap
+  and anti-entropy reconciliation that could OOM nodes with large caches on
+  deploy. The push-based bootstrap previously materialised the entire local
+  cache into a single list (and a single RPC payload) and emitted per-entry
+  primary-cache telemetry spans, both of which scaled with the cache size.
+  Bootstrap now streams entries chunk-by-chunk to the joining peer, and the
+  internal `ttl`/`put_new`/`put` calls used by bootstrap and anti-entropy
+  pass `telemetry: false` so they no longer emit per-entry spans or
+  increment primary-cache stats counters. The chunk size is configurable
+  via the new `:bootstrap_chunk_size` replication option (defaults to
+  `1_000`). Per-cycle visibility is preserved through the existing
+  `:bootstrap` and `:anti_entropy` span events.
+  [#15](https://github.com/elixir-nebulex/nebulex_distributed/issues/15).
+
 ## [v3.2.1](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.1) (2026-03-28)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.2.0...v3.2.1)
 
