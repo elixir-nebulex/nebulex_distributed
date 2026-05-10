@@ -71,7 +71,7 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
     adapter_meta
     |> Replicated.with_dynamic_cache(:stream!, [
       [select: {:key, :value}],
-      [timeout: :infinity]
+      [timeout: :infinity, telemetry: false]
     ])
     |> Enum.reduce(:array.new(@buckets, default: 0), fn {key, value}, acc ->
       idx = :erlang.phash2(key, @buckets)
@@ -90,14 +90,14 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
     adapter_meta
     |> Replicated.with_dynamic_cache(:stream!, [
       [select: {:key, :value}],
-      [timeout: :infinity]
+      [timeout: :infinity, telemetry: false]
     ])
     |> Stream.filter(fn {key, _value} ->
       MapSet.member?(bucket_set, :erlang.phash2(key, @buckets))
     end)
     |> Stream.map(fn {key, value} ->
-      case Replicated.with_dynamic_cache(adapter_meta, :ttl, [key, []]) do
-        {:ok, ttl} -> {key, {:put, [key, value, [ttl: ttl]]}}
+      case Replicated.with_dynamic_cache(adapter_meta, :ttl, [key, [telemetry: false]]) do
+        {:ok, ttl} -> {key, {:put, [key, value, [ttl: ttl, telemetry: false]]}}
         _error -> nil
       end
     end)

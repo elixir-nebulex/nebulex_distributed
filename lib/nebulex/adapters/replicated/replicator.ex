@@ -9,49 +9,50 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
 
   @doc false
   def stream_entries(adapter_meta) do
+    # `telemetry: false` is set on every internal command so we don't emit a
+    # span per entry — those spans copy `adapter_meta`/`args`/`result` into
+    # event metadata and dominate GC pressure on large caches (see #15).
     adapter_meta
     |> Replicated.with_dynamic_cache(:stream!, [
       [select: {:key, :value}],
-      [timeout: :infinity]
+      [timeout: :infinity, telemetry: false]
     ])
     |> Stream.map(fn {key, value} ->
-      case Replicated.with_dynamic_cache(adapter_meta, :ttl, [key, []]) do
+      case Replicated.with_dynamic_cache(adapter_meta, :ttl, [key, [telemetry: false]]) do
         {:ok, ttl} ->
-          {key, {:put, [key, value, [ttl: ttl]]}}
+          {key, {:put, [key, value, [ttl: ttl, telemetry: false]]}}
 
         _error ->
           nil
       end
     end)
     |> Stream.reject(&is_nil/1)
-    |> Enum.to_list()
   end
 
   @doc false
   def push_entries(target_node, adapter_meta) do
-    case stream_entries(adapter_meta) do
-      [] ->
-        0
+    # Stream the local cache in chunks and ship one RPC per chunk so peak
+    # heap on both sender and receiver stays bounded regardless of total
+    # cache size. Each entry is converted from `:put` to `:put_new` so the
+    # bootstrap doesn't overwrite data the target already received via
+    # normal replication.
+    adapter_meta
+    |> stream_entries()
+    |> Stream.chunk_every(adapter_meta.bootstrap_chunk_size)
+    |> Enum.reduce(0, fn chunk, total ->
+      bootstrap_chunk =
+        Enum.map(chunk, fn {key, {:put, args}} -> {key, {:put_new, args}} end)
 
-      entries ->
-        # Convert :put to :put_new for bootstrap — only write if key doesn't
-        # exist on the target node, preserving any data it already received
-        # via normal replication.
-        bootstrap_entries =
-          Enum.map(entries, fn {key, {:put, args}} ->
-            {key, {:put_new, args}}
-          end)
+      RPC.call(
+        target_node,
+        __MODULE__,
+        :apply_bootstrap_entries,
+        [adapter_meta, bootstrap_chunk],
+        adapter_meta.replication_timeout
+      )
 
-        RPC.call(
-          target_node,
-          __MODULE__,
-          :apply_bootstrap_entries,
-          [adapter_meta, bootstrap_entries],
-          adapter_meta.replication_timeout
-        )
-
-        Enum.count(entries)
-    end
+      total + length(bootstrap_chunk)
+    end)
   end
 
   @doc false

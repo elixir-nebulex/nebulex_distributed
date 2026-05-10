@@ -411,6 +411,61 @@ defmodule Nebulex.Adapters.Replicated do
         }
         ```
 
+  ### Bootstrap and anti-entropy: primary-cache events
+
+  The internal cache commands the bootstrap and anti-entropy paths issue
+  against the primary storage (entry streaming, per-entry `ttl` lookups on
+  the source, and `put_new`/`put` applications on the receiver) are emitted
+  with `telemetry: false`. This suppresses the Nebulex cache command events
+  on the primary storage, so the primary cache's stats counters
+  (`:hits`, `:writes`, etc.) are not incremented either.
+
+  This is intentional: bootstrap and anti-entropy are infrastructure
+  operations, not application traffic. Counting them per entry would inflate
+  hit-rate and write-rate dashboards by the cache's full size on every
+  redeploy or AE cycle, and would generate enough per-entry metadata to
+  put pressure on the BEAM heap on large caches.
+
+  Per-cycle visibility is preserved through the dedicated `:bootstrap` and
+  `:anti_entropy` span events documented above — `total` (entries pushed)
+  and `repaired` / `divergent_buckets` (entries reconciled) are reported in
+  the `:stop` metadata.
+
+  ### Asymmetry with normal replication
+
+  Normal replication of user-driven `put`/`delete` operations emits
+  telemetry on every replica that applies the write — bootstrap and
+  anti-entropy do not. Two telemetry prefixes are involved: the replicated
+  cache's own (`telemetry_prefix ++ [:command, …]`) and the primary
+  storage's (`telemetry_prefix ++ [:primary, :command, …]`). Which
+  `*, :stop` event fires for each operation:
+
+  | Operation                                 | Replicated | Primary |
+  | ----------------------------------------- | :--------: | :-----: |
+  | `Cache.put` on the entry node             |     ✓      |    ✓    |
+  | Same `put` applied on each replica        |     —      |    ✓    |
+  | Bootstrap push to a joining node          |     —      |    —    |
+  | Anti-entropy repair on a divergent peer   |     —      |    —    |
+
+  Concretely: a `Cache.put` on node A in a 3-node cluster fires the
+  replicated event once (on A) and the primary event three times (on A,
+  B, and C, as the same write lands locally and is applied on each replica
+  through the inbox). Bootstrapping a fourth node D with the same data
+  fires neither event for the bootstrapped entries.
+
+  Two consequences for dashboards:
+
+    * Aggregating the primary event across replicas over-counts user
+      writes by the replication fanout (one event per replica) and
+      under-counts anything bootstrap or anti-entropy populated. For
+      cluster-wide rates of user-driven activity, count the replicated
+      event instead — it fires exactly once per user call.
+    * After a bootstrap or anti-entropy repair, a replica's primary
+      `:writes` counter will be lower than its peers' even though the
+      primary contents converge. The primary prefix is still the right
+      signal for per-replica health (e.g., "is replica B applying
+      replication?") — just read it per-node, not summed across replicas.
+
   ## Anti-Entropy Reconciliation
 
   The replicated adapter supports optional anti-entropy reconciliation
@@ -605,6 +660,7 @@ defmodule Nebulex.Adapters.Replicated do
       replication_timeout: Keyword.fetch!(replication_opts, :timeout),
       replication_retries: Keyword.fetch!(replication_opts, :retries),
       replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay),
+      bootstrap_chunk_size: Keyword.fetch!(replication_opts, :bootstrap_chunk_size),
       anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval)
     }
 
