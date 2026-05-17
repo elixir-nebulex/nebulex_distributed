@@ -19,12 +19,13 @@ end
 
 # Mocks
 [
+  ExHashRing.Ring,
   Nebulex.Distributed.Cluster,
   Nebulex.Distributed.TestCache.Multilevel.L1,
   Nebulex.Distributed.TestCache.Multilevel.L2,
   Nebulex.Distributed.TestCache.Multilevel.L3,
   Nebulex.Distributed.TestCache.ReplicatedCache.Primary,
-  ExHashRing.Ring
+  PartitionedBuffer.Map
 ]
 |> Enum.each(&Mimic.copy/1)
 

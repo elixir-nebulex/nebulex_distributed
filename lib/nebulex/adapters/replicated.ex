@@ -300,6 +300,37 @@ defmodule Nebulex.Adapters.Replicated do
         }
         ```
 
+    * `telemetry_prefix ++ [:replication, :discarded]` - Dispatched when a
+      replicate-side buffer write (inbox or outbox) raised and was swallowed
+      to preserve the `{:ok, _} | {:error, _}` contract of the calling cache
+      operation. The local primary already holds the write; only the
+      replication-side bookkeeping for this specific call is lost. Typical
+      cause is a cache shutdown race where the buffers stop before the
+      primary (rest_for_one order). Inbox and outbox writes are independent
+      — a single user operation may emit zero, one, or two `:discarded`
+      events.
+
+      * Measurements: `%{system_time: non_neg_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom,
+          buffer: :inbox | :outbox,
+          key: term(),
+          command: {atom, [term()]},
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+        ```
+
+      Operationally: enable `:anti_entropy_interval` to have peers
+      reconciled automatically on the next AE cycle. Without anti-entropy,
+      a discarded write stays local until the same key is written again
+      (which produces a fresh replication attempt).
+
   The `:errors` field in the `:stop` metadata is a list of `{error, node}`
   tuples for each peer node that failed to receive the replication batch.
   An empty list indicates all peers were updated successfully. When errors
@@ -471,7 +502,9 @@ defmodule Nebulex.Adapters.Replicated do
   The replicated adapter supports optional anti-entropy reconciliation
   to detect and repair data drift between nodes. This can happen after
   missed replication batches (e.g., brief network partitions or node
-  outages).
+  outages). Anti-entropy is also the recommended recovery mechanism
+  when `[:replication, :discarded]` events are observed, since those
+  writes never reach peers on their own.
 
   When enabled via `:anti_entropy_interval`, a background process runs
   periodically on each node:
@@ -519,6 +552,14 @@ defmodule Nebulex.Adapters.Replicated do
     * _**Queryable Operations**_: General queries (`get_all`, `count_all`,
       `stream`) operate on the local cache only. `delete_all` operates
       locally and replicates the deletion to all peer nodes.
+
+    * _**Shutdown Race**_: During cache shutdown the buffers stop before
+      the primary store (`:rest_for_one` order). An in-flight write that
+      lands during that window writes its value to the local primary but
+      its replication is dropped and a `[:replication, :discarded]` event
+      is emitted. Since the node itself is shutting down, peers retain
+      consistency on their side; a replacement node bootstraps from a
+      peer on rejoin.
 
   """
 
@@ -875,15 +916,46 @@ defmodule Nebulex.Adapters.Replicated do
     [query, select: select]
   end
 
-  defp replicate(%{inbox: inbox, outbox: outbox}, key, command) do
+  defp replicate(%{inbox: inbox, outbox: outbox} = adapter_meta, key, command) do
     # Wall-clock version so that timestamps are comparable across nodes
     # (monotonic_time has a per-node epoch and cannot be compared cross-node).
     version = System.system_time()
 
-    # Write to inbox tagged :local (for conflict resolution, won't re-apply)
-    :ok = PartitionedBuffer.Map.put_newer(inbox, key, {command, :local}, version)
+    # Inbox tagged :local (for conflict resolution, won't re-apply);
+    # outbox carries the bare command and is tagged :remote on delivery.
+    safe_put(adapter_meta, :inbox, inbox, key, {command, :local}, version, command)
+    safe_put(adapter_meta, :outbox, outbox, key, command, version, command)
 
-    # Write to outbox (no origin tag, will be tagged :remote on delivery)
-    :ok = PartitionedBuffer.Map.put_newer(outbox, key, command, version)
+    :ok
+  end
+
+  defp safe_put(adapter_meta, buffer, table, key, value, version, command) do
+    PartitionedBuffer.Map.put_newer(table, key, value, version)
+  rescue
+    exception ->
+      emit_discarded(adapter_meta, buffer, key, command, :error, exception, __STACKTRACE__)
+  catch
+    :exit, reason ->
+      emit_discarded(adapter_meta, buffer, key, command, :exit, reason, __STACKTRACE__)
+
+    :throw, value ->
+      emit_discarded(adapter_meta, buffer, key, command, :throw, value, __STACKTRACE__)
+  end
+
+  defp emit_discarded(adapter_meta, buffer, key, command, kind, reason, stacktrace) do
+    :telemetry.execute(
+      adapter_meta.telemetry_prefix ++ [:replication, :discarded],
+      %{system_time: System.system_time()},
+      %{
+        adapter_meta: adapter_meta,
+        node: node(),
+        buffer: buffer,
+        key: key,
+        command: command,
+        kind: kind,
+        reason: reason,
+        stacktrace: stacktrace
+      }
+    )
   end
 end

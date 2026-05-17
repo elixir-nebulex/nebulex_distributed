@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## UNRELEASED
+
+### Fixed
+
+- [Nebulex.Adapters.Replicated] Fixed `ArgumentError` raised out of write
+  callbacks (`put`, `put_all`, `delete`, `take`, `expire`, `touch`,
+  `update_counter`, `delete_all`) during a cache shutdown race. The replicated
+  supervisor stops the inbox/outbox `PartitionedBuffer.Map` children before
+  the primary store (`:rest_for_one` order); an in-flight write that landed
+  in that window crashed on `:ets.insert_new` against the now-dead buffer
+  table. `replicate/3` now wraps each per-buffer `put_newer` in
+  `try/rescue/catch`, emits a new `[:replication, :discarded]` telemetry
+  event, and always returns `:ok` (the local primary already holds the write
+  and the node is shutting down anyway).
+  [#18](https://github.com/elixir-nebulex/nebulex_distributed/issues/18).
+
 ## [v3.2.2](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.2) (2026-05-11)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.2.1...v3.2.2)
 
