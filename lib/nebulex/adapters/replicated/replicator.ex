@@ -125,7 +125,7 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
         peers,
         HM,
         :put_all_newer,
-        [adapter_meta.inbox, entries],
+        [adapter_meta.inbox, entries, adapter_meta.rt_buffer_opts],
         adapter_meta.replication_timeout
       )
       |> case do

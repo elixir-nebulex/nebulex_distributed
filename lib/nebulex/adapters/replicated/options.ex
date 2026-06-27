@@ -76,6 +76,41 @@ defmodule Nebulex.Adapters.Replicated.Options do
       Defaults to `System.schedulers_online()`.
       """
     ],
+    key_hasher: [
+      type: {:or, [{:in, [true]}, {:fun, 1}]},
+      required: false,
+      doc: """
+      Optional key hashing for the inbox/outbox buffers. Cache keys
+      that contain maps (or other terms that aren't valid in an ETS
+      match-spec head) cannot be buffered as-is — the underlying
+      `Tidefall.HashMap` raises `"not a valid match specification"`
+      on the second write to such a key. Enable this option to hash
+      keys before they are buffered, sidestepping the limitation.
+      Maps to the `:key_hasher` option of `Tidefall.HashMap`.
+
+      Can be one of:
+
+        * `true` — hash with `:erlang.phash2/1`. Fast, but 28-bit
+          and collision-prone; use only when collisions are
+          acceptable.
+        * A function of arity 1 (`(any() -> any())`) — applied to
+          the key to produce the buffer storage key, e.g.
+          `&:erlang.phash2/1` or
+          `&:crypto.hash(:sha256, :erlang.term_to_binary(&1))`.
+
+      Disabled by default (keys are buffered as-is). The hasher only
+      affects buffering/coalescing — the primary cache still stores
+      entries under the original key.
+
+      > #### Use the same hasher on every node {: .warning}
+      >
+      > Configure an identical `:key_hasher` on all cluster nodes,
+      > otherwise replicated writes won't coalesce consistently. For
+      > that reason prefer `true` or a **named** function capture
+      > (`&Module.fun/1`) over an anonymous function, which does not
+      > survive across nodes or rolling deploys reliably.
+      """
+    ],
     anti_entropy_interval: [
       type: :pos_integer,
       required: false,

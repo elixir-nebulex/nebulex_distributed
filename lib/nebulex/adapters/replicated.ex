@@ -703,7 +703,8 @@ defmodule Nebulex.Adapters.Replicated do
       replication_retries: Keyword.fetch!(replication_opts, :retries),
       replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay),
       bootstrap_chunk_size: Keyword.fetch!(replication_opts, :bootstrap_chunk_size),
-      anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval)
+      anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval),
+      rt_buffer_opts: rt_buffer_opts(replication_opts)
     }
 
     # Prepare child spec
@@ -931,7 +932,7 @@ defmodule Nebulex.Adapters.Replicated do
   end
 
   defp safe_put(adapter_meta, buffer, table, key, value, version, command) do
-    HM.put_newer(table, key, value, version: version)
+    HM.put_newer(table, key, value, [{:version, version} | adapter_meta.rt_buffer_opts])
   rescue
     exception ->
       emit_discarded(adapter_meta, buffer, key, command, :error, exception, __STACKTRACE__)
@@ -958,5 +959,21 @@ defmodule Nebulex.Adapters.Replicated do
         stacktrace: stacktrace
       }
     )
+  end
+
+  # Runtime opts passed to every Tidefall buffer write (`put_newer` /
+  # `put_all_newer`). Built once at setup and stored in `adapter_meta`.
+  defp rt_buffer_opts(replication_opts) do
+    maybe_add_key_hasher(replication_opts, [])
+  end
+
+  # Adds `:key_hasher` only when configured. `Tidefall.HashMap` validates
+  # its runtime opts and rejects an explicit `key_hasher: nil`, so the key
+  # must be omitted (not set to `nil`) when the option is unset.
+  defp maybe_add_key_hasher(replication_opts, buffer_opts) do
+    case Keyword.fetch(replication_opts, :key_hasher) do
+      {:ok, hasher} -> [key_hasher: hasher] ++ buffer_opts
+      :error -> buffer_opts
+    end
   end
 end

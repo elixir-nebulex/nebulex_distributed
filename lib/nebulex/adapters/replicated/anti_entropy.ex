@@ -182,7 +182,7 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
             {key, {command, :remote}, version}
           end)
 
-        :ok = HM.put_all_newer(inbox, inbox_entries)
+        :ok = HM.put_all_newer(inbox, inbox_entries, adapter_meta.rt_buffer_opts)
 
         {Enum.count(peer_entries), Enum.count(divergent)}
     end
