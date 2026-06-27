@@ -30,16 +30,18 @@ them as part of session bootstrap.
 - `lib/nebulex/adapters/replicated/anti_entropy.ex` - Merkle-style reconciliation cycle.
 - `lib/nebulex/adapters/*/options.ex` - Adapter option definitions/docs.
 - `lib/nebulex/adapters/*/supervisor.ex` - Adapter supervision trees.
+- `lib/nebulex/distributed.ex` - Package umbrella module and docs entry point.
 - `lib/nebulex/distributed/application.ex` - OTP application entry point.
 - `lib/nebulex/distributed/cluster.ex` - Cluster membership and node discovery.
 - `lib/nebulex/distributed/rpc.ex` - Remote procedure call helpers.
-- `lib/nebulex/distributed/transaction.ex` - Distributed transaction coordination.
+- `lib/nebulex/distributed/transaction.ex` - Distributed transaction coordination (and its `transaction/options.ex`).
 - `lib/nebulex/distributed/helpers.ex` - Shared distributed utilities.
 - `lib/nebulex/distributed/ring_monitor.ex` - Hash ring monitoring.
-- `test/nebulex/adapters/partitioned_test.exs` - Partitioned adapter tests.
+- `test/nebulex/adapters/partitioned_*.exs` - Partitioned adapter tests (incl. error, node-filter).
 - `test/nebulex/adapters/multilevel_*.exs` - Multilevel adapter tests (inclusive, exclusive, error).
 - `test/nebulex/adapters/coherent_test.exs` - Coherent adapter tests.
-- `test/nebulex/adapters/replicated_test.exs` - Replicated adapter tests.
+- `test/nebulex/adapters/replicated_*.exs` - Replicated adapter tests (incl. buffer-race, key-hasher).
+- `test/nebulex/distributed/*_test.exs` - Distributed utility tests (RPC, helpers).
 - `test/shared/` - Shared test cases (distributed, multilevel, transaction, info).
 - `README.md` - Public usage/configuration for this package.
 - `CHANGELOG.md` - Package release history.
