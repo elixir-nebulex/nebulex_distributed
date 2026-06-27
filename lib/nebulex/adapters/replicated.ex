@@ -36,9 +36,9 @@ defmodule Nebulex.Adapters.Replicated do
       regardless of which node originated the write.
 
     * _**Double-Buffered I/O**_: Both outbox (sending) and inbox (receiving)
-      are backed by `PartitionedBuffer.Map`, which provides double-buffered
+      are backed by `Tidefall.HashMap`, which provides double-buffered
       ETS tables for zero-downtime processing — writes continue while the
-      previous batch is being processed. See `PartitionedBuffer.Map` for
+      previous batch is being processed. See `Tidefall.HashMap` for
       more details on the buffering mechanism.
 
   ## How It Works
@@ -578,6 +578,7 @@ defmodule Nebulex.Adapters.Replicated do
   alias __MODULE__.Options
   alias Nebulex.Adapter
   alias Nebulex.Distributed.Cluster
+  alias Tidefall.HashMap, as: HM
 
   ## Nebulex.Adapter
 
@@ -677,7 +678,7 @@ defmodule Nebulex.Adapters.Replicated do
       replication_opts
       |> Keyword.take([:partitions])
       |> Keyword.merge(
-        processing_interval_ms: Keyword.fetch!(replication_opts, :interval),
+        processing_interval: Keyword.fetch!(replication_opts, :interval),
         processing_batch_size: Keyword.fetch!(replication_opts, :batch_size)
       )
 
@@ -930,7 +931,7 @@ defmodule Nebulex.Adapters.Replicated do
   end
 
   defp safe_put(adapter_meta, buffer, table, key, value, version, command) do
-    PartitionedBuffer.Map.put_newer(table, key, value, version)
+    HM.put_newer(table, key, value, version: version)
   rescue
     exception ->
       emit_discarded(adapter_meta, buffer, key, command, :error, exception, __STACKTRACE__)

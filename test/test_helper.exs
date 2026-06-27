@@ -25,7 +25,7 @@ end
   Nebulex.Distributed.TestCache.Multilevel.L2,
   Nebulex.Distributed.TestCache.Multilevel.L3,
   Nebulex.Distributed.TestCache.ReplicatedCache.Primary,
-  PartitionedBuffer.Map
+  Tidefall.HashMap
 ]
 |> Enum.each(&Mimic.copy/1)
 

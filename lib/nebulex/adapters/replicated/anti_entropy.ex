@@ -8,6 +8,7 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
   alias Nebulex.Adapters.Replicated
   alias Nebulex.Distributed.{Cluster, RPC}
   alias Nebulex.Telemetry
+  alias Tidefall.HashMap, as: HM
 
   # State
   defstruct [:adapter_meta, :interval, :timer_ref]
@@ -181,7 +182,7 @@ defmodule Nebulex.Adapters.Replicated.AntiEntropy do
             {key, {command, :remote}, version}
           end)
 
-        :ok = PartitionedBuffer.Map.put_all_newer(inbox, inbox_entries)
+        :ok = HM.put_all_newer(inbox, inbox_entries)
 
         {Enum.count(peer_entries), Enum.count(divergent)}
     end

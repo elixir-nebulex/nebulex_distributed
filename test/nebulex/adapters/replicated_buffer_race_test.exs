@@ -4,21 +4,17 @@ defmodule Nebulex.Adapters.ReplicatedBufferRaceTest do
   #
   # During a rolling deploy, calls into `Cache.put/2` previously crashed with
   # `ArgumentError: the table identifier does not refer to an existing ETS
-  # table` raised from `:ets.insert_new/2` inside
-  # `PartitionedBuffer.Partition.put_newer/2`, invoked by
+  # table` raised from a buffer `put_newer` landing on a partition whose ETS
+  # table had just been destroyed by a dying partition process, invoked by
   # `Nebulex.Adapters.Replicated.replicate/3`.
-  #
-  # Root cause: `PartitionedBuffer.Partition` stores the partition's current
-  # ETS table atom in `:persistent_term` and never erases it on `terminate/2`.
-  # When the Partition dies, the named tables are destroyed but the
-  # persistent_term entry keeps pointing at the dead atom. The first write
-  # that lands during that window crashed.
   #
   # The fix wraps each `put_newer` call in `replicate/3` with `try`, emits a
   # `:replication, :discarded` telemetry event on failure, and always returns
   # `:ok`. The local primary write is unaffected (lands before `replicate/3`).
+  # This guards against any buffer write failure during a restart window,
+  # independent of the backing buffer implementation.
   #
-  # These tests stub `PartitionedBuffer.Map.put_newer/4` (using Mimic) to
+  # These tests stub `Tidefall.HashMap.put_newer/4` (using Mimic) to
   # raise the same `ArgumentError` the production race produces.
 
   use ExUnit.Case, async: true
@@ -27,6 +23,7 @@ defmodule Nebulex.Adapters.ReplicatedBufferRaceTest do
   import Nebulex.CacheCase, only: [safe_stop: 1, with_telemetry_handler: 3]
 
   alias Nebulex.{Adapter, Telemetry}
+  alias Tidefall.HashMap, as: HM
 
   @moduletag capture_log: true
 
@@ -136,17 +133,17 @@ defmodule Nebulex.Adapters.ReplicatedBufferRaceTest do
     end
   end
 
-  # Stubs `PartitionedBuffer.Map.put_newer/4` so calls against `target_buffer`
+  # Stubs `Tidefall.HashMap.put_newer/4` so calls against `target_buffer`
   # invoke `failure_fn` (default: raise the production-shape ArgumentError),
   # and any other buffer falls through to the real implementation.
   defp fail_buffer(target_buffer, failure_fn \\ &raise_argument_error/0) do
-    PartitionedBuffer.Map
+    HM
     |> stub(:put_newer, fn
-      ^target_buffer, _key, _value, _version ->
+      ^target_buffer, _key, _value, _opts ->
         failure_fn.()
 
-      buffer, key, value, version ->
-        call_original(PartitionedBuffer.Map, :put_newer, [buffer, key, value, version])
+      buffer, key, value, opts ->
+        call_original(HM, :put_newer, [buffer, key, value, opts])
     end)
   end
 

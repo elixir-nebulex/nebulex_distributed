@@ -4,6 +4,8 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
   alias Nebulex.Adapters.Replicated
   alias Nebulex.Distributed.{Cluster, RPC}
   alias Nebulex.Telemetry
+  alias Tidefall.HashMap, as: HM
+  alias Tidefall.HashMap.Entry
 
   ## API
 
@@ -65,10 +67,10 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
   @doc false
   def process_inbox(batch, adapter_meta) when is_list(batch) do
     Enum.each(batch, fn
-      {_key, {_command, :local}, _version, _updates} ->
+      %Entry{value: {_command, :local}} ->
         :ok
 
-      {_key, {{op, args}, :remote}, _version, _updates} ->
+      %Entry{value: {{op, args}, :remote}} ->
         Replicated.with_dynamic_cache(adapter_meta, op, args)
     end)
   end
@@ -81,7 +83,7 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
            |> List.delete(node()) do
       # Tag entries as :remote for peer inboxes
       remote_entries =
-        Enum.map(batch, fn {key, command, version, _updates} ->
+        Enum.map(batch, fn %Entry{key: key, value: command, version: version} ->
           {key, {command, :remote}, version}
         end)
 
@@ -121,7 +123,7 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
     Telemetry.span(event, metadata, fn ->
       RPC.multicall(
         peers,
-        PartitionedBuffer.Map,
+        HM,
         :put_all_newer,
         [adapter_meta.inbox, entries],
         adapter_meta.replication_timeout

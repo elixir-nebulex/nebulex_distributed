@@ -26,8 +26,8 @@ defmodule Nebulex.Adapters.Replicated.Options do
       doc: """
       How often (in milliseconds) the outbox and inbox buffers swap tables
       and run the processing cycle. Lower values mean faster replication
-      but more frequent task spawning. Maps to the `:processing_interval_ms`
-      option of `PartitionedBuffer.Map`.
+      but more frequent task spawning. Maps to the `:processing_interval`
+      option of `Tidefall.HashMap`.
       """
     ],
     batch_size: [
@@ -37,7 +37,7 @@ defmodule Nebulex.Adapters.Replicated.Options do
       doc: """
       Number of entries to read from ETS per batch when flushing the outbox
       and inbox buffers. The processor is called once per batch. Maps to
-      the `:processing_batch_size` option of `PartitionedBuffer.Map`.
+      the `:processing_batch_size` option of `Tidefall.HashMap`.
       """
     ],
     timeout: [
@@ -72,7 +72,7 @@ defmodule Nebulex.Adapters.Replicated.Options do
       doc: """
       Number of partitions for the inbox and outbox buffers. More
       partitions reduce contention under high write concurrency.
-      Maps to the `:partitions` option of `PartitionedBuffer.Map`.
+      Maps to the `:partitions` option of `Tidefall.HashMap`.
       Defaults to `System.schedulers_online()`.
       """
     ],

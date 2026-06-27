@@ -4,6 +4,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
   use Supervisor
 
   alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
+  alias Tidefall.HashMap, as: HM
 
   ## API
 
@@ -22,7 +23,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
       [
         {primary, primary_opts},
         Supervisor.child_spec(
-          {PartitionedBuffer.Map,
+          {HM,
            Keyword.merge(buffer_opts,
              name: adapter_meta.inbox,
              processor: {Replicator, :process_inbox, [adapter_meta]}
@@ -30,7 +31,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
           id: adapter_meta.inbox
         ),
         Supervisor.child_spec(
-          {PartitionedBuffer.Map,
+          {HM,
            Keyword.merge(buffer_opts,
              name: adapter_meta.outbox,
              processor: {Replicator, :process_outbox, [adapter_meta]}
