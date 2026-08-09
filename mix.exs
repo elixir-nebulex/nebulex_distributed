@@ -61,7 +61,7 @@ defmodule NebulexDistributed.MixProject do
       {:nebulex_local, "~> 3.0"},
       {:nebulex_streams, "~> 0.2"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
-      {:tidefall, github: "cabol/tidefall", branch: "main"},
+      {:tidefall, "~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
       # Test & Code Analysis
