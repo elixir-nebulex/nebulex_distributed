@@ -40,7 +40,7 @@ defmodule NebulexDistributed.MixProject do
         "coveralls.post": :test,
         "coveralls.html": :test,
         "coveralls.json": :test,
-        "test.ci": :test
+        precommit: :test
       ]
     ]
   end
@@ -99,7 +99,7 @@ defmodule NebulexDistributed.MixProject do
         "cmd rm -rf nebulex",
         "cmd git clone --depth 1 --branch main https://github.com/elixir-nebulex/nebulex"
       ],
-      "test.ci": [
+      precommit: [
         "deps.unlock --check-unused",
         "compile --warnings-as-errors",
         "format --check-formatted",

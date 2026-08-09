@@ -125,7 +125,7 @@ When submitting a pull request you should not update the
 [CHANGELOG.md](CHANGELOG.md), and also make sure you test your changes
 thoroughly, include unit tests alongside new or changed code.
 
-Before to submit a PR it is highly recommended to run `mix test.ci` and ensure
+Before to submit a PR it is highly recommended to run `mix precommit` and ensure
 all checks run successfully.
 
 ## Copyright and License
