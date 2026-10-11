@@ -541,6 +541,9 @@ defmodule Nebulex.Adapters.Multilevel do
   @behaviour Nebulex.Adapter.Queryable
   @behaviour Nebulex.Adapter.Info
 
+  # Inherit default composite KV implementation
+  use Nebulex.Adapter.CompositeKV
+
   # Inherit distributed transaction implementation using `:global`
   use Nebulex.Distributed.Transaction
 

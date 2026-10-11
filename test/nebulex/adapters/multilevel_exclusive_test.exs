@@ -3,6 +3,7 @@ defmodule Nebulex.Adapters.MultilevelExclusiveTest do
 
   use Nebulex.CacheTestCase,
     except: [
+      Nebulex.Cache.CompositeKVTelemetryTest,
       Nebulex.Cache.QueryableTest,
       Nebulex.Cache.QueryableExpirationTest,
       Nebulex.Cache.QueryableQueryErrorTest,
@@ -259,10 +260,7 @@ defmodule Nebulex.Adapters.MultilevelExclusiveTest do
 
       _ = t_sleep(1100)
 
-      # The `get_all` doesn't trigger the expiration
-      assert cache.get_all!(in: [:a, :b, :c, :d]) |> Map.new() == %{a: 1, b: 2}
-
-      # The `get` will trigger the expiration
+      # Fetching the expired entries removes them and counts the expirations
       refute cache.get!(:c)
       refute cache.get!(:d)
 
@@ -271,8 +269,8 @@ defmodule Nebulex.Adapters.MultilevelExclusiveTest do
                  deletions: 6,
                  evictions: 6,
                  expirations: 6,
-                 hits: 6,
-                 misses: 12,
+                 hits: 4,
+                 misses: 6,
                  updates: 0,
                  writes: 12
                }

@@ -1,7 +1,13 @@
 defmodule Nebulex.Adapters.PartitionedErrorTest do
   use ExUnit.Case, async: true
 
-  use Nebulex.CacheTestCase, only: [Nebulex.Cache.KVErrorTest, Nebulex.Cache.KVExpirationErrorTest]
+  use Nebulex.CacheTestCase,
+    only: [
+      Nebulex.Cache.KVErrorTest,
+      Nebulex.Cache.KVExpirationErrorTest,
+      Nebulex.Cache.CompositeKVErrorTest
+    ]
+
   use Nebulex.DistributedQueryableErrorTest
 
   import Nebulex.CacheCase, only: [setup_with_dynamic_cache: 2]
@@ -11,6 +17,8 @@ defmodule Nebulex.Adapters.PartitionedErrorTest do
       otp_app: :nebulex_distributed,
       adapter: Nebulex.Adapters.Partitioned,
       adapter_opts: [primary_storage_adapter: Nebulex.FakeAdapter]
+
+    use Nebulex.Distributed.TestCache.Commons
   end
 
   setup_with_dynamic_cache ErrorCache, __MODULE__

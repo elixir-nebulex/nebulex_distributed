@@ -1,7 +1,9 @@
 defmodule Nebulex.MultilevelTest do
-  import Nebulex.CacheCase
+  import Nebulex.CacheCase, only: [deftests: 1]
 
   deftests do
+    import Nebulex.CacheCase, only: [t_sleep: 1]
+
     describe "c:init/1" do
       test "fails because missing levels config", %{cache: cache} do
         _ = Process.flag(:trap_exit, true)

@@ -3,6 +3,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
 
   use Nebulex.CacheTestCase,
     except: [
+      Nebulex.Cache.CompositeKVTelemetryTest,
       Nebulex.Cache.QueryableTest,
       Nebulex.Cache.QueryableExpirationTest,
       Nebulex.Cache.QueryableQueryErrorTest,

@@ -103,17 +103,14 @@ defmodule Nebulex.Adapters.PartitionedInfoStatsTest do
 
         _ = t_sleep(1100)
 
-        # The `get_all` doesn't trigger the expiration
-        assert cache.get_all!(in: [:a, :b, :c, :d]) |> Map.new() == %{a: 1, b: 2}
-
-        # The `get` will trigger the expiration
+        # Fetching the expired entries removes them and counts the expirations
         refute cache.get!(:c)
         refute cache.get!(:d)
 
         wait_until fn ->
           assert cache.info!(:stats) == %{
-                   hits: 6,
-                   misses: 4,
+                   hits: 4,
+                   misses: 2,
                    writes: 4,
                    evictions: 2,
                    expirations: 2,

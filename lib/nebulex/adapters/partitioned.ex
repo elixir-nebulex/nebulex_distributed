@@ -548,6 +548,9 @@ defmodule Nebulex.Adapters.Partitioned do
   @behaviour Nebulex.Adapter.KV
   @behaviour Nebulex.Adapter.Queryable
 
+  # Inherit default composite KV implementation
+  use Nebulex.Adapter.CompositeKV
+
   # Inherit distributed transaction implementation using `:global`
   use Nebulex.Distributed.Transaction
 
