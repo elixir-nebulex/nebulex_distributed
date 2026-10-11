@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Enhancements
+
+- Implemented the `Nebulex.Adapter.CompositeKV` behaviour in all the adapters
+  (Partitioned, Multilevel, Coherent, and Replicated). Nebulex core now
+  requires it and checks it at compile time, so this release is needed to run
+  on the Nebulex version that ships the behaviour.
+- [Nebulex.Adapters.Replicated] Added the `:key_hasher` replication option to
+  buffer cache keys that contain maps (or other terms that aren't valid in an
+  ETS match-spec head). Without it, the second write to such a key crashed the
+  inbox/outbox buffer with "not a valid match specification" and the write was
+  silently discarded. Set it to `true` to hash keys with `:erlang.phash2/1`, or
+  give a 1-arity function. Configure the same hasher on every node.
+
+### Fixed
+
+- [Nebulex.Adapters.Partitioned] The function given to `get_and_update/3`,
+  `update/4`, `fetch_or_store/3`, and `get_or_store/3` now runs on the node
+  owning the key, against its primary storage, as the docs always said. Before,
+  it ran on the calling node. The whole command goes to the owner node in a
+  single RPC, so the `:timeout` option now also covers the time the function
+  takes to run, and the function must exist on every node (use a capture of a
+  named function, not an anonymous function). If the function raises, the
+  exception is re-raised on the caller with the original stacktrace. Only the
+  composite command emits a Telemetry span on the calling node; the `fetch`,
+  `put`, and `delete` commands run on the owner node under the primary
+  storage's telemetry prefix, so cache entry listeners registered on the
+  partitioned cache are not triggered by these operations.
+  [#19](https://github.com/elixir-nebulex/nebulex_distributed/issues/19).
+
 ## [v3.2.3](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.2.3) (2026-05-23)
 > [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.2.2...v3.2.3)
 
