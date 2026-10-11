@@ -39,6 +39,12 @@ defmodule Nebulex.Distributed.TestCache do
         def get_and_update_bad_fun(_), do: :other
 
         @doc false
+        def get_and_update_nil_fun(current), do: {current, nil}
+
+        @doc false
+        def pop_fun(_), do: :pop
+
+        @doc false
         def fetch_or_store_fun, do: {:ok, "value"}
 
         @doc false
@@ -46,6 +52,21 @@ defmodule Nebulex.Distributed.TestCache do
 
         @doc false
         def get_or_store_fun, do: "value"
+
+        @doc false
+        def node_fun, do: node()
+
+        @doc false
+        def ok_node_fun, do: {:ok, node()}
+
+        @doc false
+        def get_and_update_node_fun(_current), do: {nil, node()}
+
+        @doc false
+        def update_node_fun(_current), do: node()
+
+        @doc false
+        def sleep_fun, do: Process.sleep(200)
       end
     end
   end

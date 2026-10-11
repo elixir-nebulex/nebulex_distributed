@@ -246,8 +246,10 @@ defmodule Nebulex.Distributed.RPC do
     """
   end
 
-  defp format_mfa({_, :with_dynamic_cache, [meta, action, args]}) do
-    format_mfa({meta[:cache], action, args})
+  # Internal MFAs running a cache command on the node's cache are reported
+  # as the cache command itself.
+  defp format_mfa({_, _, [%{cache: cache}, action, args]}) when is_atom(action) do
+    format_mfa({cache, action, args})
   end
 
   defp format_mfa({m, f, a}) when is_list(a) do

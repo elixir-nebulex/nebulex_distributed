@@ -513,21 +513,43 @@ defmodule Nebulex.Adapters.Partitioned do
 
   ## Caveats of partitioned adapter
 
-  For operations that receive anonymous functions as arguments, such as
-  `c:Nebulex.Cache.get_and_update/3`, `c:Nebulex.Cache.update/4`,
-  `c:Nebulex.Cache.fetch_or_store/3`, and `c:Nebulex.Cache.get_or_store/3`,
-  etc., there's an important consideration: these anonymous functions are
-  compiled into the module where they are created. Since the distributed adapter
-  executes operations on remote nodes, these functions may not exist on the
-  target nodes.
+  ### Composite operations run on the owner node
 
-  To ensure these operations work correctly in a distributed environment, you
-  must provide functions from modules that exist on all nodes in the cluster.
-  This can be achieved by:
+  The operations that take a function, `c:Nebulex.Cache.get_and_update/3`,
+  `c:Nebulex.Cache.update/4`, `c:Nebulex.Cache.fetch_or_store/3`, and
+  `c:Nebulex.Cache.get_or_store/3` (see `Nebulex.Adapter.CompositeKV`), run
+  on the node that owns the key. The adapter sends the whole command to that
+  node, function included, and runs it there against the primary storage.
+  The read, the function call, and the write happen on the owner node, in a
+  single RPC. Keep in mind:
 
-  * Using named functions from modules that are available across all nodes.
-  * Defining the functions in a shared module that's loaded on every node.
-  * Using function references that can be serialized and transmitted.
+    * The function must exist on every node. An anonymous function belongs
+      to the module where it is defined, and the owner node may not have
+      that module loaded, or may have a different version of it. Use a
+      capture of a named function from a module loaded on all nodes, for
+      example `&MyApp.CacheHelpers.increment_value/1`.
+
+    * The function runs on the owner node, not on the calling one. Anything
+      it captures that exists only on the calling node, like an ETS table,
+      is not available there.
+
+    * The `:timeout` option covers the whole command, including the time
+      the function takes to run.
+
+    * If the function raises, the exception is re-raised on the calling
+      process with the original stacktrace.
+
+    * Only the composite command (for example, `get_or_store`) emits a
+      Telemetry span on the calling node. The `fetch`, `put`, and `delete`
+      commands run on the owner node against the primary storage, under the
+      primary storage's telemetry prefix. So, the cache entry listeners
+      registered on the partitioned cache (see
+      `c:Nebulex.Cache.register_event_listener/2`) are not triggered by
+      these operations. The stats are still counted on the owner's primary
+      storage, which is what `c:Nebulex.Cache.info/2` reads.
+
+    * Running on the owner node doesn't make the operation atomic. See
+      `Nebulex.Adapter.CompositeKV`.
 
   Example of the recommended approach:
 
@@ -833,6 +855,28 @@ defmodule Nebulex.Adapters.Partitioned do
     call(adapter_meta, key, :incr, [key, amount, [ttl: ttl, default: default] ++ opts], opts)
   end
 
+  ## Nebulex.Adapter.CompositeKV
+
+  @impl true
+  def get_and_update(adapter_meta, key, fun, ttl, keep_ttl?, opts) do
+    run_on_owner(adapter_meta, key, :get_and_update, [fun], ttl, keep_ttl?, opts)
+  end
+
+  @impl true
+  def update(adapter_meta, key, initial, fun, ttl, keep_ttl?, opts) do
+    run_on_owner(adapter_meta, key, :update, [initial, fun], ttl, keep_ttl?, opts)
+  end
+
+  @impl true
+  def fetch_or_store(adapter_meta, key, fun, ttl, keep_ttl?, opts) do
+    run_on_owner(adapter_meta, key, :fetch_or_store, [fun], ttl, keep_ttl?, opts)
+  end
+
+  @impl true
+  def get_or_store(adapter_meta, key, fun, ttl, keep_ttl?, opts) do
+    run_on_owner(adapter_meta, key, :get_or_store, [fun], ttl, keep_ttl?, opts)
+  end
+
   ## Nebulex.Adapter.Queryable
 
   @impl true
@@ -1065,6 +1109,21 @@ defmodule Nebulex.Adapters.Partitioned do
     end)
   end
 
+  @doc """
+  Same as `with_dynamic_cache/3`, but returns `{:ok, result}` and captures
+  any raised exception as `{:raise, exception, stacktrace}`, so the caller
+  node can re-raise it as is instead of getting it wrapped in an RPC error.
+
+  **NOTE:** Internal purposes only.
+  """
+  @spec __run_on_owner__(Nebulex.Adapter.adapter_meta(), atom(), [any()]) ::
+          {:ok, any()} | {:raise, Exception.t(), Exception.stacktrace()}
+  def __run_on_owner__(adapter_meta, action, args) do
+    {:ok, with_dynamic_cache(adapter_meta, action, args)}
+  rescue
+    exception -> {:raise, exception, __STACKTRACE__}
+  end
+
   ## Private Functions
 
   defp build_query(%{select: select, query: query}) do
@@ -1095,13 +1154,29 @@ defmodule Nebulex.Adapters.Partitioned do
     |> Cluster.find_node(key)
   end
 
-  defp call(adapter_meta, key, action, args, opts) do
+  defp call(adapter_meta, key, action, args, opts, rpc_fun \\ :with_dynamic_cache) do
     timeout = Keyword.fetch!(opts, :timeout)
 
     with {:ok, node} <- find_node(adapter_meta, key) do
-      RPC.call(node, __MODULE__, :with_dynamic_cache, [adapter_meta, action, args], timeout)
+      RPC.call(node, __MODULE__, rpc_fun, [adapter_meta, action, args], timeout)
     end
   end
+
+  # Runs the whole composite `action` (the given function included) on the
+  # node owning `key`, against its primary storage. Exceptions raised there
+  # are re-raised on the caller with the original stacktrace.
+  defp run_on_owner(adapter_meta, key, action, args, ttl, keep_ttl?, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    primary_opts = [ttl: ttl, keep_ttl: keep_ttl?] ++ opts
+
+    adapter_meta
+    |> call(key, action, [key | args] ++ [primary_opts], opts, :__run_on_owner__)
+    |> handle_owner_result()
+  end
+
+  defp handle_owner_result({:ok, result}), do: result
+  defp handle_owner_result({:raise, exception, stacktrace}), do: reraise(exception, stacktrace)
+  defp handle_owner_result({:error, _} = error), do: error
 
   defp map_reduce(enum, meta, action, args, timeout, acc, reducer, group_fun \\ & &1) do
     enum
