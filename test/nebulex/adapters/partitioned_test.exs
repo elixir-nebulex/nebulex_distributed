@@ -2,8 +2,10 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   use Nebulex.NodeCase, async: true
 
   # Inherit tests
+  # `CompositeKVTelemetryTest` asserts the primitive spans of the default
+  # composite implementation; here they run on the owner node instead.
   use Nebulex.CacheTestCase,
-    except: [Nebulex.Cache.QueryableQueryErrorTest]
+    except: [Nebulex.Cache.CompositeKVTelemetryTest, Nebulex.Cache.QueryableQueryErrorTest]
 
   use Nebulex.DistributedTest
   use Nebulex.DistributedInfoTest
@@ -54,6 +56,150 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     {:ok,
      cache: PartitionedCache, name: @cache_name, cluster: cluster, nil_cache: PartitionedNilCache}
+  end
+
+  describe "composite KV operations" do
+    test "run on the node owning the key", %{cache: cache} do
+      [k1, k2, k3, k4] = remote_keys(cache, 4)
+
+      assert cache.get_or_store!(k1, &cache.node_fun/0) == cache.find_node!(k1)
+      assert cache.fetch_or_store!(k2, &cache.ok_node_fun/0) == cache.find_node!(k2)
+
+      assert cache.get_and_update!(k3, &cache.get_and_update_node_fun/1) ==
+               {nil, cache.find_node!(k3)}
+
+      # On a miss the initial value is stored and the function isn't called
+      assert cache.update!(k4, nil, &cache.update_node_fun/1) == nil
+      assert cache.update!(k4, nil, &cache.update_node_fun/1) == cache.find_node!(k4)
+
+      for key <- [k1, k2, k3, k4] do
+        assert cache.fetch!(key) == cache.find_node!(key)
+      end
+    end
+
+    test "run locally when the calling node owns the key", %{cache: cache} do
+      [key] = local_keys(cache, 1)
+
+      assert cache.get_or_store!(key, &cache.node_fun/0) == node()
+      assert cache.fetch!(key) == node()
+    end
+
+    test "pop the entry on the owner node", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+
+      :ok = cache.put!(key, 1)
+
+      assert cache.get_and_update!(key, &cache.pop_fun/1) == {1, nil}
+      assert cache.has_key?(key) == {:ok, false}
+      assert cache.get_and_update!(key, &cache.pop_fun/1) == {nil, nil}
+    end
+
+    test "forward the :ttl and :keep_ttl options to the owner node", %{cache: cache} do
+      [k1, k2] = remote_keys(cache, 2)
+      ttl = :timer.minutes(1)
+
+      assert cache.update!(k1, 1, &cache.update_node_fun/1, ttl: ttl) == 1
+      assert cache.ttl!(k1) in 1..ttl
+
+      :ok = cache.put!(k2, 1, ttl: ttl)
+
+      assert cache.get_and_update!(k2, &cache.get_and_update_fun/1, keep_ttl: true) == {1, 2}
+      assert cache.ttl!(k2) in 1..ttl
+
+      assert cache.get_and_update!(k2, &cache.get_and_update_fun/1) == {2, 4}
+      assert cache.ttl!(k2) == :infinity
+    end
+
+    test "return the function error from the owner node without storing", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+
+      assert {:error, %Nebulex.Error{reason: :error, metadata: metadata}} =
+               cache.fetch_or_store(key, &cache.fetch_or_store_error_fun/0)
+
+      assert Keyword.take(metadata, [:command, :key]) == [command: :fetch_or_store, key: key]
+      assert cache.has_key?(key) == {:ok, false}
+    end
+
+    test "re-raise the exceptions raised by the function", %{cache: cache} do
+      for key <- remote_keys(cache, 1) ++ local_keys(cache, 1) do
+        assert_raise ArgumentError, "error", fn ->
+          cache.get_or_store(key, &cache.raise_error/0)
+        end
+
+        assert_raise ArgumentError, ~r"must return a two-element tuple or :pop", fn ->
+          cache.get_and_update!(key, &cache.get_and_update_bad_fun/1)
+        end
+
+        assert_raise RuntimeError, ~r"must return \{:ok, value\} or \{:error, reason\}", fn ->
+          cache.fetch_or_store!(key, &cache.get_or_store_fun/0)
+        end
+
+        assert cache.has_key?(key) == {:ok, false}
+      end
+    end
+
+    test "return an error when the function exits on the owner node", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+
+      assert {:error, %Nebulex.Error{reason: {:rpc, {:exit, {:exception, "bye"}}}}} =
+               cache.get_or_store(key, &cache.exit/0)
+    end
+
+    test "the :timeout option covers the given function", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+      msg = rpc_error(cache.find_node!(key), cache, :get_or_store, 3, :timeout)
+
+      assert_raise Nebulex.Error, msg, fn ->
+        cache.get_or_store!(key, &cache.sleep_fun/0, timeout: 10)
+      end
+    end
+
+    test "return an error when the owner node is unreachable", %{cache: cache} do
+      node = :"invalid@127.0.0.1"
+
+      Nebulex.Distributed.Cluster
+      |> stub(:find_node, fn _, _ -> {:ok, node} end)
+
+      assert_raise Nebulex.Error, rpc_error(node, cache, :update, 4, :noconnection), fn ->
+        cache.update!(:key, 1, &cache.update_node_fun/1)
+      end
+    end
+
+    test "return an error when the key has no owner node", %{cache: cache} do
+      error = {:error, %Nebulex.Error{reason: :no_owner}}
+
+      Nebulex.Distributed.Cluster
+      |> stub(:find_node, fn _, _ -> error end)
+
+      assert cache.get_and_update(:key, &cache.get_and_update_fun/1) == error
+      assert cache.update(:key, 1, &cache.update_node_fun/1) == error
+      assert cache.fetch_or_store(:key, &cache.fetch_or_store_fun/0) == error
+      assert cache.get_or_store(:key, &cache.get_or_store_fun/0) == error
+    end
+
+    test "emit the composite command span only on the calling node", %{cache: cache, name: name} do
+      prefix = Adapter.lookup_meta(name).telemetry_prefix
+      start = prefix ++ [:command, :start]
+      stop = prefix ++ [:command, :stop]
+      fun = &cache.get_or_store_fun/0
+
+      with_telemetry_handler [start, stop], fn ->
+        for key <- remote_keys(cache, 1) ++ local_keys(cache, 1) do
+          assert cache.get_or_store(key, fun) == {:ok, "value"}
+
+          assert_receive {^start, _,
+                          %{command: :get_or_store, args: [^key, ^fun, :infinity, false, _]}}
+
+          assert_receive {^stop, _, %{command: :get_or_store, result: {:ok, "value"}}}
+          refute_received {_, _, %{command: :fetch}}
+          refute_received {_, _, %{command: :put}}
+        end
+
+        assert cache.get_or_store!(:key, fun, telemetry: false) == "value"
+
+        refute_received {_, _, %{command: :get_or_store}}
+      end
+    end
   end
 
   describe "ring" do
@@ -358,6 +504,15 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
   end
 
   ## Private Functions
+
+  defp remote_keys(cache, count), do: keys_owned_by(cache, count, &(&1 != node()))
+  defp local_keys(cache, count), do: keys_owned_by(cache, count, &(&1 == node()))
+
+  defp keys_owned_by(cache, count, owner_filter) do
+    1..1000
+    |> Stream.filter(&owner_filter.(cache.find_node!(&1)))
+    |> Enum.take(count)
+  end
 
   defp teardown_cache(key) do
     node = PartitionedCache.find_node!(key)

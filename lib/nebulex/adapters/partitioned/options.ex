@@ -124,7 +124,10 @@ defmodule Nebulex.Adapters.Partitioned.Options do
 
       This timeout applies to RPC calls made to remote nodes during partitioned
       cache operations. Since the partitioned adapter routes requests across
-      cluster nodes, network latency and node load affect execution time.
+      cluster nodes, network latency and node load affect execution time. For
+      `get_and_update`, `update`, `fetch_or_store`, and `get_or_store`, the
+      timeout also covers the time the given function takes to run on the
+      node owning the key.
 
       Set to `:infinity` to wait indefinitely. If a timeout occurs, the
       operation fails with an error. Note that the underlying cache operation
