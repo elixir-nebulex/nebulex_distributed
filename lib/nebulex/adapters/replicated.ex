@@ -570,6 +570,9 @@ defmodule Nebulex.Adapters.Replicated do
   @behaviour Nebulex.Adapter.Transaction
   @behaviour Nebulex.Adapter.Info
 
+  # Inherit default composite KV implementation
+  use Nebulex.Adapter.CompositeKV
+
   # Inherit default observable implementation
   use Nebulex.Adapter.Observable
 

@@ -2,7 +2,11 @@ defmodule Nebulex.Adapters.MultilevelErrorTest do
   use ExUnit.Case, async: true
 
   use Nebulex.CacheTestCase,
-    only: [Nebulex.Cache.KVErrorTest, Nebulex.Cache.KVExpirationErrorTest]
+    only: [
+      Nebulex.Cache.KVErrorTest,
+      Nebulex.Cache.KVExpirationErrorTest,
+      Nebulex.Cache.CompositeKVErrorTest
+    ]
 
   import Nebulex.CacheCase, only: [setup_with_dynamic_cache: 3]
 
@@ -11,6 +15,8 @@ defmodule Nebulex.Adapters.MultilevelErrorTest do
     use Nebulex.Cache,
       otp_app: :nebulex_distributed,
       adapter: Nebulex.Adapters.Multilevel
+
+    use Nebulex.Distributed.TestCache.Commons
 
     defmodule L1 do
       use Nebulex.Cache,
