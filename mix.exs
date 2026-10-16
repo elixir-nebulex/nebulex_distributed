@@ -187,12 +187,6 @@ defmodule NebulexDistributed.MixProject do
            link: :at
          ]},
         {:usage_rules, [sub_rules: ["otp"], link: :at]}
-      ],
-
-      # Agent skills configuration
-      skills: [
-        # Auto-build a "use-<pkg>" skill per dependency
-        deps: [:nebulex]
       ]
     ]
   end
