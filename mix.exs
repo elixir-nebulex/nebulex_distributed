@@ -58,7 +58,7 @@ defmodule NebulexDistributed.MixProject do
   defp deps do
     [
       nebulex_dep(),
-      {:nebulex_local, github: "elixir-nebulex/nebulex_local", branch: "main"},
+      {:nebulex_local, "~> 3.1"},
       {:nebulex_streams, "~> 0.2"},
       {:ex_hash_ring, "~> 6.0 or ~> 7.0"},
       {:tidefall, "~> 1.0"},
@@ -90,7 +90,7 @@ defmodule NebulexDistributed.MixProject do
     if path = System.get_env("NEBULEX_PATH") do
       {:nebulex, path: path, override: true}
     else
-      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main", override: true}
+      {:nebulex, "~> 3.1"}
     end
   end
 
