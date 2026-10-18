@@ -1,9 +1,9 @@
 # Architecture
 
 This guide covers what the code and the module docs do not: how the modules
-split responsibility, the design decisions behind the subtle parts, and the
-non-negotiable rules for every change. Read the "Non-Negotiables" section at
-session start; read the rest before structural changes.
+split responsibility and the non-negotiable rules for every change. Read the
+"Non-Negotiables" section at session start; read the rest before structural
+changes.
 
 For how the adapters work and how to configure them, read the module docs:
 
@@ -55,61 +55,6 @@ This section covers only how the modules split responsibility:
 
 ---
 
-## Design Decisions
-
-Each of these fixed a real bug or design problem. Do not reverse one without
-a documented reason and a test that covers the original problem.
-
-### Partitioned composite commands run on the owner node
-
-`get_and_update`, `update`, `fetch_or_store`, and `get_or_store` send the
-whole command to the node that owns the key in a single RPC, and the
-function runs there against the primary storage. Running it on the calling
-node broke the documented semantics (#19). Because of this, the function
-must exist on every node: use a capture of a named function, not an
-anonymous function, in docs and tests.
-
-### Replicated writes are local first, then pushed in batches
-
-A write is applied to the local primary first and then pushed to the peers
-through the outbox/inbox buffers (`Tidefall`), in batches. If a write lands
-while the cache is shutting down and the buffer is already gone, the write
-stays local, the adapter emits `[:replication, :discarded]`, and the
-callback still returns `:ok` (#18). Do not let buffer errors escape the
-write callbacks.
-
-### Versions use wall-clock time
-
-Conflicts resolve as "newer version wins", with versions from
-`System.system_time()`. `System.monotonic_time()` has a per-node epoch and
-cannot be compared across nodes (#14). Do not switch back.
-
-### Bootstrap is push-based, streamed, and silent
-
-When a node joins, the existing node with the smallest name (Erlang term
-ordering) pushes its entries to it with `:put_new`, so the joining node
-never overwrites newer writes (#14). Entries go out in chunks of
-`:bootstrap_chunk_size`, and the internal calls used by bootstrap and
-anti-entropy pass `telemetry: false`. Loading the whole cache into one list
-and emitting a span per entry ran nodes with large caches out of memory on
-deploy (#15).
-
-### Anti-entropy repairs through the inbox
-
-Anti-entropy hashes keys into 1024 fixed buckets with XOR fingerprints,
-compares with one random peer per cycle, and repairs only the divergent
-entries. Repairs go through the inbox, so they keep the "newer version wins"
-semantics.
-
-### Keys must be valid in a match-spec head, or hashed
-
-The replication buffers match on keys, so keys that are not valid in an ETS
-match-spec head (for example maps) need the `:key_hasher` option. Without
-it, the second write to such a key crashed the buffer and the write was
-lost. Every node must use the same hasher.
-
----
-
 ## Non-Negotiables
 
 These rules apply in addition to the shared non-negotiables in the core
@@ -135,7 +80,7 @@ option changes, update every adapter that it applies to.
 ### 4. Keep this document up to date
 
 After any structural change (changing the module boundaries, adding an
-optional dependency, or reversing or adding a design decision above),
+optional dependency, or adding a non-negotiable),
 review this document and update it if needed. When you add, move, or
 remove a file, update the "Local Key Files" list in `AGENTS.md`. Do not
 copy here what the module docs already say; link to them. A stale
@@ -146,6 +91,14 @@ architecture guide is worse than no guide.
 ```bash
 NEBULEX_PATH=nebulex mix precommit
 ```
+
+### 6. Read why before changing subtle behavior
+
+The reasons behind the subtle behavior (composite commands on the owner
+node, replication and versioning, bootstrap, anti-entropy, and `:key_hasher`)
+are in the module docs, the code comments, the CHANGELOG, and the tests. Read
+them, and the history (`git log -S`), before changing that code. Do not reverse
+such behavior without a test that covers the original problem.
 
 ---
 

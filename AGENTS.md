@@ -7,8 +7,7 @@ Nebulex-core files, treat them as upstream guidance and prioritize this
 repository's local files and modules.
 
 Read `usage-rules/architecture.md` first (imported below). It covers the
-module boundaries, the design decisions behind the subtle parts, and the
-non-negotiable contribution rules. For how the adapters work, read the
+module boundaries and the non-negotiable contribution rules. For how the adapters work, read the
 module docs it links to.
 
 @usage-rules/architecture.md
@@ -95,7 +94,7 @@ attention to these rules, which are easy to miss:
 - `test/nebulex/distributed/*_test.exs` - Distributed utility tests (RPC, helpers).
 - `test/shared/` - Shared test cases (distributed, multilevel, transaction, info).
 - `test/support/` - Test caches and the peer-node cluster helpers.
-- `usage-rules/architecture.md` - Module boundaries, design decisions, and non-negotiables.
+- `usage-rules/architecture.md` - Module boundaries and non-negotiables.
 - `README.md` - Public usage/configuration for this package.
 - `CHANGELOG.md` - Package release history.
 
