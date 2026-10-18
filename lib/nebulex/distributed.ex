@@ -47,7 +47,7 @@ defmodule Nebulex.Distributed do
 
       def deps do
         [
-          {:nebulex_distributed, "~> 3.0"},
+          {:nebulex_distributed, "~> 3.3"},
           {:telemetry, "~> 0.4 or ~> 1.0"}, # For observability and monitoring
           {:decorator, "~> 1.4"},           # For declarative caching
         ]

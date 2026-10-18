@@ -4,20 +4,23 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [v3.3.0](https://github.com/elixir-nebulex/nebulex_distributed/tree/v3.3.0) (2026-10-18)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_distributed/compare/v3.2.3...v3.3.0)
 
 ### Enhancements
 
 - Implemented the `Nebulex.Adapter.CompositeKV` behaviour in all the adapters
-  (Partitioned, Multilevel, Coherent, and Replicated). Nebulex core now
-  requires it and checks it at compile time, so this release is needed to run
-  on the Nebulex version that ships the behaviour.
+  (Partitioned, Multilevel, Coherent, and Replicated). Nebulex 3.1 requires it
+  and checks it at compile time, so the `nebulex` and `nebulex_local`
+  requirements are now `~> 3.1`.
 - [Nebulex.Adapters.Replicated] Added the `:key_hasher` replication option to
   buffer cache keys that contain maps (or other terms that aren't valid in an
   ETS match-spec head). Without it, the second write to such a key crashed the
   inbox/outbox buffer with "not a valid match specification" and the write was
   silently discarded. Set it to `true` to hash keys with `:erlang.phash2/1`, or
   give a 1-arity function. Configure the same hasher on every node.
+- [Nebulex.Adapters.Replicated] The inbox and outbox buffers now use
+  `tidefall` instead of `partitioned_buffer`.
 
 ### Fixed
 
