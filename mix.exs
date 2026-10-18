@@ -123,7 +123,7 @@ defmodule NebulexDistributed.MixProject do
       ],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE* AGENTS.md)
+      files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE*)
     ]
   end
 
