@@ -34,8 +34,8 @@ concurrent writes, or when nodes join and leave.
 
 ## Module Boundaries
 
-The per-file map lives in the "Local Key Files" section of `AGENTS.md`.
-This section covers only how the modules split responsibility:
+This section covers how the modules split responsibility; the file layout
+is in `lib/` and `test/`.
 
 - Each adapter (`Partitioned`, `Replicated`, `Coherent`, `Multilevel`) is an
   entry point that implements the behaviours and delegates storage to its
@@ -80,11 +80,10 @@ option changes, update every adapter that it applies to.
 ### 4. Keep this document up to date
 
 After any structural change (changing the module boundaries, adding an
-optional dependency, or adding a non-negotiable),
-review this document and update it if needed. When you add, move, or
-remove a file, update the "Local Key Files" list in `AGENTS.md`. Do not
-copy here what the module docs already say; link to them. A stale
-architecture guide is worse than no guide.
+optional dependency, or adding a non-negotiable), review this document and
+update it if needed. When you add, move, or remove a file, check that this
+section still holds. Do not copy here what the module docs already say;
+link to them. A stale architecture guide is worse than no guide.
 
 ### 5. `mix precommit` must pass
 

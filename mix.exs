@@ -175,21 +175,11 @@ defmodule NebulexDistributed.MixProject do
       # The file to write usage rules into (required for usage_rules syncing)
       file: "AGENTS.md",
 
-      # Rules referenced from AGENTS.md via markdown links into deps/.
-      # Keeps AGENTS.md compact and lets contributors read the canonical
-      # rules from the nebulex / usage_rules deps without inlined drift.
+      # Rules linked from AGENTS.md into deps/, read on demand. The entry
+      # point (nebulex:workflow) is imported eagerly by the AGENTS.md preface.
       usage_rules: [
-        {:nebulex,
-         [
-           sub_rules: [
-             "workflow",
-             "nebulex",
-             "elixir-style",
-             "elixir"
-           ],
-           link: :at
-         ]},
-        {:usage_rules, [sub_rules: ["otp"], link: :at]}
+        {:nebulex, [sub_rules: ["nebulex", "elixir-style"], link: :markdown]},
+        {:usage_rules, [sub_rules: [], link: :markdown]}
       ]
     ]
   end
