@@ -10,7 +10,7 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
   alias Nebulex.Telemetry
 
   # State
-  defstruct [:adapter_meta, :pg_group, :pg_ref, :cluster_nodes]
+  defstruct [:adapter_meta, :pg_group, :pg_ref, :cluster_nodes, :task_supervisor]
 
   ## API
 
@@ -19,6 +19,12 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
     name = camelize_and_concat([name, ClusterMonitor])
 
     GenServer.start_link(__MODULE__, adapter_meta, name: name)
+  end
+
+  @doc false
+  @spec task_supervisor_name(map()) :: atom()
+  def task_supervisor_name(%{name: name}) do
+    camelize_and_concat([name, "BootstrapTasks"])
   end
 
   ## GenServer Callbacks
@@ -38,7 +44,8 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
       adapter_meta: adapter_meta,
       pg_group: pg_group,
       pg_ref: pg_ref,
-      cluster_nodes: MapSet.new([node()])
+      cluster_nodes: MapSet.new([node()]),
+      task_supervisor: task_supervisor_name(adapter_meta)
     }
 
     {:ok, state, {:continue, :post_join}}
@@ -65,34 +72,29 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
           pg_ref: pg_ref,
           pg_group: pg_group,
           adapter_meta: adapter_meta,
-          cluster_nodes: cluster_nodes
+          cluster_nodes: cluster_nodes,
+          task_supervisor: task_supervisor
         } = state
       ) do
     # Calculate the difference between the new nodes and the cluster nodes
-    diff =
+    new_nodes =
       pids
       |> Enum.map(&node/1)
       |> MapSet.new()
       |> MapSet.difference(cluster_nodes)
 
-    # Push entries to genuinely new nodes (push-based bootstrap).
-    if MapSet.size(diff) > 0 and leader?(cluster_nodes) do
-      diff
-      |> MapSet.to_list()
-      |> Enum.each(&push_to_new_node(&1, adapter_meta))
+    # The pusher is elected among the nodes `:pg` knows right now, minus the
+    # joiners, rather than from this process's view. The view can lag behind
+    # `:pg` (events still queued, or an earlier join batch lost to a failed
+    # push) and a stale view elects extra pushers; `:pg` converges as soon as
+    # the connection is up.
+    if MapSet.size(new_nodes) > 0 and leader?(pusher_candidates(pg_group, new_nodes)) do
+      Enum.each(new_nodes, &start_push(task_supervisor, &1, adapter_meta))
     end
 
-    # Update cluster view
-    updated_nodes = MapSet.union(cluster_nodes, diff)
-
-    {:noreply, %{state | cluster_nodes: updated_nodes}}
-  rescue
-    # coveralls-ignore-start
-    _error -> {:noreply, state}
-  catch
-    :exit, _reason ->
-      {:noreply, state}
-      # coveralls-ignore-stop
+    # The view is updated regardless of what the pushes do, so a failing push
+    # cannot drop the joined nodes from it.
+    {:noreply, %{state | cluster_nodes: MapSet.union(cluster_nodes, new_nodes)}}
   end
 
   # PG leave event — node(s) left the cluster
@@ -137,14 +139,35 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
 
   ## Private functions
 
-  # Simple leader election: all existing nodes share the same cluster view
-  # (they all received the same :pg events), so they all compute the same
-  # Enum.min() — only the node with the smallest name (Erlang term ordering)
-  # pushes, avoiding duplicate work. If views temporarily diverge due to
-  # event ordering, the worst case is zero or multiple pushers, both safe:
-  # :put_new is idempotent, and anti-entropy repairs any remaining gaps.
-  defp leader?(cluster_nodes) do
-    node() == cluster_nodes |> MapSet.to_list() |> Enum.min()
+  # Every node `:pg` currently knows for the group, except the nodes in the
+  # join batch being handled: a joiner may well have the smallest name, but
+  # it has nothing to push. This node is always a candidate: it is a member
+  # of the group and its own join never reaches the handler as a new node.
+  defp pusher_candidates(pg_group, new_nodes) do
+    pg_group
+    |> Cluster.pg_nodes()
+    |> Enum.reject(&MapSet.member?(new_nodes, &1))
+  end
+
+  # Simple leader election: the candidate with the smallest name (Erlang term
+  # ordering) pushes. Every node evaluates it against the same `:pg`
+  # membership, so they agree as soon as `:pg` has converged. If memberships
+  # temporarily diverge, the worst case is zero or multiple pushers, both
+  # safe: `:put_new` is idempotent, and anti-entropy repairs any remaining
+  # gaps.
+  defp leader?(candidates), do: node() == Enum.min(candidates)
+
+  # The push runs in its own supervised task, so a failure (the target raising
+  # mid-bootstrap, a dropped connection, a timeout) is reported through the
+  # task and the `:bootstrap` telemetry span's `:exception` event instead of
+  # blocking or corrupting this process.
+  defp start_push(task_supervisor, new_node, adapter_meta) do
+    _ =
+      Task.Supervisor.start_child(task_supervisor, fn ->
+        push_to_new_node(new_node, adapter_meta)
+      end)
+
+    :ok
   end
 
   defp maybe_reset_gc_interval(%{cache: cache} = adapter_meta, cluster_nodes) do

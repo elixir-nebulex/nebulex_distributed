@@ -110,12 +110,16 @@ defmodule Nebulex.Adapters.Replicated do
     2. All existing `ClusterMonitor` processes receive the `:join` event
        via `:pg.monitor_scope/1`.
     3. A simple leader election (smallest node name by Erlang term
-       ordering) ensures exactly one existing node pushes data,
-       avoiding duplicate work.
+       ordering among the current `:pg` members other than the joiner)
+       ensures exactly one existing node pushes data, avoiding
+       duplicate work.
     4. The leader streams its local cache entries to the new node via
        RPC, using `:put_new` commands — entries are written only if
        the key does not already exist on the new node, preserving any
-       data it received via normal replication in the meantime.
+       data it received via normal replication in the meantime. The
+       push runs in a supervised task; a failure is reported through
+       the `:bootstrap` telemetry span (`:exception` event) and does
+       not affect the monitor's cluster view.
     5. If the primary storage adapter is `Nebulex.Adapters.Local`, the
        new node resets the GC interval on all cluster nodes to
        synchronize generation rotation and prevent premature eviction.

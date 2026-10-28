@@ -38,6 +38,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
            )},
           id: adapter_meta.outbox
         ),
+        {Task.Supervisor, name: ClusterMonitor.task_supervisor_name(adapter_meta)},
         {ClusterMonitor, adapter_meta}
       ] ++ maybe_anti_entropy(adapter_meta)
 
