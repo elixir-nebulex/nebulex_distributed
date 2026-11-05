@@ -523,11 +523,17 @@ defmodule Nebulex.Adapters.Partitioned do
   The read, the function call, and the write happen on the owner node, in a
   single RPC. Keep in mind:
 
-    * The function must exist on every node. An anonymous function belongs
-      to the module where it is defined, and the owner node may not have
-      that module loaded, or may have a different version of it. Use a
-      capture of a named function from a module loaded on all nodes, for
-      example `&MyApp.CacheHelpers.increment_value/1`.
+    * The function runs with the owner node's copy of the code. An
+      anonymous function carries the variables it captures, such as the
+      key, plus a reference to the module where it is defined and to that
+      module's version. If the owner node doesn't have the module loaded
+      (for example, the function was defined in a script or a test file),
+      the call raises `UndefinedFunctionError`. If the owner node has a
+      different version of the module, as can happen during a rolling
+      deploy, the call raises `BadFunctionError`. A capture of a named
+      function, such as `&MyApp.CacheHelpers.increment_value/1`, is looked
+      up by module, name, and arity, so it keeps working across module
+      versions as long as the function exists.
 
     * The function runs on the owner node, not on the calling one. Anything
       it captures that exists only on the calling node, like an ETS table,
@@ -551,17 +557,18 @@ defmodule Nebulex.Adapters.Partitioned do
     * Running on the owner node doesn't make the operation atomic. See
       `Nebulex.Adapter.CompositeKV`.
 
-  Example of the recommended approach:
+  Both kinds of functions work when the module that defines them is loaded
+  on every node:
 
-      # Instead of anonymous functions, use named functions from shared modules
       defmodule MyApp.CacheHelpers do
-        def increment_value(current_value) do
-          (current_value || 0) + 1
-        end
+        def increment_value(current_value), do: current_value + 1
       end
 
-      # Use the named function in cache operations
-      MyCache.get_and_update("counter", &MyApp.CacheHelpers.increment_value/1)
+      # A capture of a named function
+      MyCache.update("counter", 1, &MyApp.CacheHelpers.increment_value/1)
+
+      # An anonymous function that captures the key
+      MyCache.get_or_store(key, fn -> MyApp.Values.build(key) end)
 
   """
 

@@ -67,6 +67,9 @@ defmodule Nebulex.Distributed.TestCache do
 
         @doc false
         def sleep_fun, do: Process.sleep(200)
+
+        @doc false
+        def key_node_fun(key), do: fn -> {key, node()} end
       end
     end
   end

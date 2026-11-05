@@ -110,6 +110,23 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
       assert cache.ttl!(k2) == :infinity
     end
 
+    test "run anonymous functions that capture variables", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+
+      assert cache.get_or_store!(key, cache.key_node_fun(key)) == {key, cache.find_node!(key)}
+    end
+
+    test "raise when the owner node doesn't have the function's module", %{cache: cache} do
+      [key] = remote_keys(cache, 1)
+
+      # The test module is compiled only on the calling node
+      assert_raise UndefinedFunctionError, fn ->
+        cache.get_or_store(key, fn -> :value end)
+      end
+
+      assert cache.has_key?(key) == {:ok, false}
+    end
+
     test "return the function error from the owner node without storing", %{cache: cache} do
       [key] = remote_keys(cache, 1)
 
