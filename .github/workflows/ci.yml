@@ -82,7 +82,6 @@ jobs:
 
       - name: Install Dependencies
         run: mix deps.get
-        if: ${{ steps.mix-cache.outputs.cache-hit != 'true' }}
 
       - name: Compile deps
         run: mix deps.compile
