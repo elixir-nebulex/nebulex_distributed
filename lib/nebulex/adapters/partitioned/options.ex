@@ -99,13 +99,15 @@ defmodule Nebulex.Adapters.Partitioned.Options do
       By default, all nodes that join the cluster are added to the
       hash ring.
 
-      > #### Function Captures {: .info}
+      > #### Use a named function capture {: .info}
       >
-      > Due to how anonymous functions are implemented in the Erlang VM,
-      > it is best to use function captures (`&Mod.fun/1`) as node filters.
-      > In other words, avoid using literal anonymous functions
-      > (`fn ... -> ... end`) or local function captures (`&my_filter/1`)
-      > as they cannot be serialized across distributed nodes.
+      > The ring monitor keeps the filter for as long as the cache runs
+      > and calls it on the local node whenever the cluster changes. A
+      > capture of a named function (`&Mod.fun/1`) is looked up by
+      > module, name, and arity on each call, so it picks up new code
+      > after a hot code upgrade. An anonymous function
+      > (`fn ... -> ... end`) or a local capture (`&my_filter/1`) stays
+      > bound to the version of the module that created it.
 
       See the ["Node Filter"](`Nebulex.Adapters.Partitioned#module-node-filter`)
       section for more information and examples.
