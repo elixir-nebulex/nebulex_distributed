@@ -112,8 +112,13 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
     test "run anonymous functions that capture variables", %{cache: cache} do
       [key] = remote_keys(cache, 1)
+      node = cache.find_node!(key)
 
-      assert cache.get_or_store!(key, cache.key_node_fun(key)) == {key, cache.find_node!(key)}
+      # Build the function on the owner node so it matches the code loaded
+      # there. Under coverage, the calling node runs cover-compiled modules.
+      fun = :erpc.call(node, cache, :key_node_fun, [key])
+
+      assert cache.get_or_store!(key, fun) == {key, node}
     end
 
     test "raise when the owner node doesn't have the function's module", %{cache: cache} do
