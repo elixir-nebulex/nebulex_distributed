@@ -26,6 +26,21 @@ defmodule Nebulex.Distributed.RPC do
   ## API
 
   @doc """
+  Evaluates `apply(mod, fun, args)` on node `node` without waiting for the
+  result. Nothing is returned, and a node that is down is not an error.
+
+  ## Example
+
+      iex> Nebulex.Distributed.RPC.cast(node(), Map, :new, [[]])
+      :ok
+
+  """
+  @spec cast(node(), module(), atom(), [any()]) :: :ok
+  def cast(node, mod, fun, args) do
+    :erpc.cast(node, mod, fun, args)
+  end
+
+  @doc """
   Evaluates `apply(mod, fun, args)` on node `node` and returns the corresponding
   evaluation result.
 

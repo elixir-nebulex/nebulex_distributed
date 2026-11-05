@@ -110,12 +110,26 @@ defmodule Nebulex.Adapters.Replicated do
     2. All existing `ClusterMonitor` processes receive the `:join` event
        via `:pg.monitor_scope/1`.
     3. A simple leader election (smallest node name by Erlang term
-       ordering) ensures exactly one existing node pushes data,
-       avoiding duplicate work.
-    4. The leader streams its local cache entries to the new node via
-       RPC, using `:put_new` commands — entries are written only if
-       the key does not already exist on the new node, preserving any
-       data it received via normal replication in the meantime.
+       ordering among the current `:pg` members whose own bootstrap has
+       completed, other than the joiner) ensures exactly one existing
+       node pushes data, avoiding duplicate work. Only when no member
+       at all is bootstrapped does the election fall back to every
+       member, and the node that then pushes becomes the first
+       bootstrapped member. A node that starts before it is connected
+       to its peers sees them as joiners once the connection is up,
+       finds no candidate, and is pushed to like any other joiner.
+    4. The leader queues the push and streams its local cache entries
+       to the new node via RPC, one joiner at a time, using `:put_new`
+       commands — entries are written only if the key does not already
+       exist on the new node, preserving any data it received via
+       normal replication in the meantime. When the push completes, the
+       new node becomes a pusher candidate itself. A failed push is
+       reported through the `:bootstrap` telemetry span (`:exception`
+       event), does not stop the pushes to the other joiners, and does
+       not affect the monitor's cluster view; the joiner then stays out
+       of the candidates. If a bootstrapped node leaves, the node that
+       leads afterwards queues every member that is not bootstrapped
+       yet, so joiners the leaver still had queued are not stranded.
     5. If the primary storage adapter is `Nebulex.Adapters.Local`, the
        new node resets the GC interval on all cluster nodes to
        synchronize generation rotation and prevent premature eviction.
@@ -685,8 +699,10 @@ defmodule Nebulex.Adapters.Replicated do
         processing_batch_size: Keyword.fetch!(replication_opts, :batch_size)
       )
 
-    # PG group name for cluster membership
+    # PG group name for cluster membership, and the group of members whose
+    # bootstrap has completed (the bootstrap pusher candidates)
     pg_group = camelize_and_concat([name, PG])
+    ready_pg_group = camelize_and_concat([name, ReadyPG])
 
     # Buffer names
     inbox = camelize_and_concat([name, Inbox])
@@ -700,6 +716,7 @@ defmodule Nebulex.Adapters.Replicated do
       name: name,
       primary_name: primary_opts[:name],
       pg_group: pg_group,
+      ready_pg_group: ready_pg_group,
       inbox: inbox,
       outbox: outbox,
       replication_timeout: Keyword.fetch!(replication_opts, :timeout),

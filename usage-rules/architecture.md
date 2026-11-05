@@ -49,9 +49,9 @@ is in `lib/` and `test/`.
 - `Nebulex.Distributed.Transaction` is the default transaction
   implementation for the distributed adapters.
 - In `Replicated`, `Replicator` processes the outbox/inbox batches and
-  streams the bootstrap entries, `ClusterMonitor` watches node joins and
-  elects the bootstrap leader, and `AntiEntropy` runs the reconciliation
-  cycle.
+  streams the bootstrap entries, `ClusterMonitor` watches node joins,
+  elects the bootstrap leader and queues its pushes one joiner at a time,
+  and `AntiEntropy` runs the reconciliation cycle.
 
 ---
 
