@@ -11,7 +11,7 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
   import Nebulex.CacheCase, only: [safe_stop: 1, with_telemetry_handler: 3, wait_until: 1]
 
   alias Nebulex.Adapter
-  alias Nebulex.Adapters.Replicated.{Replicator, VersionLog}
+  alias Nebulex.Adapters.Replicated.{AntiEntropy, Replicator, VersionLog}
   alias Nebulex.Distributed.TestCache.ReplicatedCache, as: Cache
   alias Nebulex.Telemetry
   alias Tidefall.HashMap.Entry
@@ -297,7 +297,10 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
     end
 
     test "an entry expires after the window" do
-      {name, meta} = start_cache(replication: [interval: 10, timeout: 1, retries: 0])
+      {name, meta} =
+        start_cache(
+          replication: [interval: 10, timeout: 1, retries: 0, anti_entropy_interval: false]
+        )
 
       Cache.with_dynamic_cache(name, fn ->
         deliver(meta, [put(:k, "new", 200)])
@@ -312,7 +315,10 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
     end
 
     test "the barrier expires after the window" do
-      {name, meta} = start_cache(replication: [interval: 10, timeout: 1, retries: 0])
+      {name, meta} =
+        start_cache(
+          replication: [interval: 10, timeout: 1, retries: 0, anti_entropy_interval: false]
+        )
 
       Cache.with_dynamic_cache(name, fn ->
         deliver(meta, [flush(200)])
@@ -352,6 +358,61 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
     end
   end
 
+  describe "anti-entropy" do
+    test "offers the changes of both log generations", %{meta: meta} do
+      {name_b, meta_b} = start_cache(replication: [interval: 10])
+      now = System.system_time()
+
+      deliver(meta, [put(:k1, "v1", now - 2), put(:k2, "old", now - 2)])
+      rotate(meta)
+      deliver(meta, [put(:k2, "new", now - 1)])
+
+      assert {2, _} = AntiEntropy.steady_state(node(), meta_b, meta)
+
+      wait_until(fn ->
+        result = Cache.with_dynamic_cache(name_b, fn -> Cache.get_all!(in: [:k1, :k2]) end)
+
+        assert Map.new(result) == %{k1: "v1", k2: "new"}
+      end)
+    end
+
+    test "skips the keys the peer log no longer holds", %{meta: meta} do
+      assert AntiEntropy.log_values(meta, [:unknown]) == []
+    end
+  end
+
+  describe "anti-entropy convergence" do
+    property "two caches that each missed recent changes end equal to the model" do
+      check all(
+              changes <- recent_changes(),
+              max_runs: 30
+            ) do
+        {name_a, meta_a} = start_cache(replication: [interval: 10])
+        {name_b, meta_b} = start_cache(replication: [interval: 10])
+
+        :ok = Replicator.process_inbox(for({entry, to} <- changes, to != :b, do: entry), meta_a)
+        :ok = Replicator.process_inbox(for({entry, to} <- changes, to != :a, do: entry), meta_b)
+
+        # A cycle in each direction, the peer being the other cache.
+        _ = AntiEntropy.steady_state(node(), meta_a, meta_b)
+        _ = AntiEntropy.steady_state(node(), meta_b, meta_a)
+
+        expected = changes |> Enum.map(&elem(&1, 0)) |> model()
+
+        for name <- [name_a, name_b] do
+          wait_until(fn ->
+            result = Cache.with_dynamic_cache(name, fn -> Cache.get_all!(in: keys()) end)
+
+            assert Map.new(result) == expected
+          end)
+        end
+
+        :ok = Cache.stop(name_a, [])
+        :ok = Cache.stop(name_b, [])
+      end
+    end
+  end
+
   ## Generators and model
 
   defp keys, do: [:a, :b, :c, :d]
@@ -375,6 +436,30 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
       map(key, &{:expire, [&1, :infinity, []]}),
       constant({:delete_all, [@flush_query, []]})
     ])
+  end
+
+  # Recent puts and deletes, each one received by cache `:a`, cache `:b`, or
+  # both.
+  defp recent_changes do
+    key = member_of(keys())
+
+    op =
+      one_of([
+        map({key, integer()}, fn {k, v} -> {:put, [k, v, []]} end),
+        map(key, &{:delete, [&1, []]})
+      ])
+
+    gen all(
+          ops <- list_of(op, min_length: 1, max_length: 30),
+          offsets <- uniq_list_of(integer(1..1_000_000), length: length(ops)),
+          receivers <- list_of(member_of([:a, :b, :both]), length: length(ops))
+        ) do
+      now = System.system_time()
+
+      [ops, offsets, receivers]
+      |> Enum.zip()
+      |> Enum.map(fn {op, offset, to} -> {entry(op, :remote, now - offset), to} end)
+    end
   end
 
   # For one cache: the order of the commands, which ones are delivered twice,

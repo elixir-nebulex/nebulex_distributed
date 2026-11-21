@@ -28,6 +28,9 @@ defmodule Nebulex.Adapters.Replicated.VersionLog do
   @typedoc "The kind of the last change of a key."
   @type kind() :: :put | :delete
 
+  # Number of buckets of the digest.
+  @buckets 1024
+
   ## API
 
   @doc false
@@ -167,6 +170,39 @@ defmodule Nebulex.Adapters.Replicated.VersionLog do
     |> Enum.filter(&match?({_, :put}, lookup(log, &1)))
   end
 
+  @doc """
+  Returns the digest of the changes with a version greater than or equal to
+  `since`: for every bucket with at least one of them, the XOR of the hashes
+  of its `{key, version, kind}` entries.
+  """
+  @spec digest(t(), integer()) :: %{non_neg_integer() => integer()}
+  def digest(log, since) do
+    fold_recent(log, since, %{}, fn {key, _version, _kind} = entry, acc ->
+      hash = :erlang.phash2(entry)
+
+      Map.update(acc, bucket(key), hash, &Bitwise.bxor(&1, hash))
+    end)
+  end
+
+  @doc """
+  Returns the `{key, version, kind}` entries in the given buckets with a
+  version greater than or equal to `since`.
+  """
+  @spec entries(t(), [non_neg_integer()], integer()) :: [{any(), integer(), kind()}]
+  def entries(log, buckets, since) do
+    buckets = MapSet.new(buckets)
+
+    fold_recent(log, since, [], fn {key, _version, _kind} = entry, acc ->
+      if MapSet.member?(buckets, bucket(key)), do: [entry | acc], else: acc
+    end)
+  end
+
+  @doc """
+  Returns the digest bucket of `key`.
+  """
+  @spec bucket(any()) :: non_neg_integer()
+  def bucket(key), do: :erlang.phash2(key, @buckets)
+
   ## GenServer callbacks
 
   @impl true
@@ -230,6 +266,29 @@ defmodule Nebulex.Adapters.Replicated.VersionLog do
       [{:barrier, version, _epoch}] -> version
       [] -> default
     end
+  end
+
+  # Folds the latest entry of every key changed since `since`. An entry of
+  # the previous generation is skipped when the current one has the key.
+  defp fold_recent(log, since, acc, fun) do
+    {current, previous} = generations(log)
+
+    acc =
+      :ets.foldl(
+        fn {_key, version, _kind} = entry, acc ->
+          if version >= since, do: fun.(entry, acc), else: acc
+        end,
+        acc,
+        current
+      )
+
+    :ets.foldl(
+      fn {key, version, _kind} = entry, acc ->
+        if version >= since and not :ets.member(current, key), do: fun.(entry, acc), else: acc
+      end,
+      acc,
+      previous
+    )
   end
 
   # The previous generation is cleared and becomes the current one. Entries

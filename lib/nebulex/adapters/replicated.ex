@@ -10,7 +10,7 @@ defmodule Nebulex.Adapters.Replicated do
     * Double-buffered outbox and inbox for high-throughput batched replication.
     * "Newer version wins" conflict resolution via wall-clock versions and a
       per-node version log.
-    * Optional anti-entropy reconciliation to detect and repair data drift.
+    * Anti-entropy reconciliation to repair the recent changes a node missed.
     * Configurable primary storage adapter.
 
   ## Replicated Cache Topology
@@ -361,8 +361,9 @@ defmodule Nebulex.Adapters.Replicated do
         }
         ```
 
-      Operationally: enable `:anti_entropy_interval` to have peers
-      reconciled automatically on the next AE cycle. Without anti-entropy,
+      Operationally: with anti-entropy enabled (the default), peers take
+      the write on a later cycle, as long as it happened within half the
+      version window. Without anti-entropy,
       a discarded write stays local until the same key is written again
       (which produces a fresh replication attempt).
 
@@ -442,7 +443,9 @@ defmodule Nebulex.Adapters.Replicated do
   ### Anti-entropy events
 
   When anti-entropy reconciliation is enabled (`:anti_entropy_interval`),
-  the following Telemetry span events are emitted each cycle:
+  the following Telemetry span events are emitted each cycle. The `:mode`
+  is `:steady_state` or `:catch_up` (see
+  ["Anti-Entropy Reconciliation"](#module-anti-entropy-reconciliation)):
 
     * `telemetry_prefix ++ [:anti_entropy, :start]` - Dispatched when
       an anti-entropy cycle starts.
@@ -454,7 +457,8 @@ defmodule Nebulex.Adapters.Replicated do
         %{
           adapter_meta: %{optional(atom) => term},
           node: atom,
-          peer: atom
+          peer: atom,
+          mode: :steady_state | :catch_up
         }
         ```
 
@@ -469,6 +473,7 @@ defmodule Nebulex.Adapters.Replicated do
           adapter_meta: %{optional(atom) => term},
           node: atom,
           peer: atom,
+          mode: :steady_state | :catch_up,
           repaired: non_neg_integer,
           divergent_buckets: non_neg_integer
         }
@@ -486,6 +491,7 @@ defmodule Nebulex.Adapters.Replicated do
           adapter_meta: %{optional(atom) => term},
           node: atom,
           peer: atom,
+          mode: :steady_state | :catch_up,
           kind: :error | :exit | :throw,
           reason: term(),
           stacktrace: [term()]
@@ -549,35 +555,55 @@ defmodule Nebulex.Adapters.Replicated do
 
   ## Anti-Entropy Reconciliation
 
-  The replicated adapter supports optional anti-entropy reconciliation
-  to detect and repair data drift between nodes. This can happen after
-  missed replication batches (e.g., brief network partitions or node
-  outages). Anti-entropy is also the recommended recovery mechanism
-  when `[:replication, :discarded]` events are observed, since those
-  writes never reach peers on their own.
+  Anti-entropy repairs the changes a node missed, for example after a
+  replication batch that failed, a brief network partition, or a
+  `[:replication, :discarded]` event. It is enabled by default and runs
+  every `:anti_entropy_interval` on each node, against a random peer.
 
-  When enabled via `:anti_entropy_interval`, a background process runs
-  periodically on each node:
+  Anti-entropy never undoes a write or a delete. When it cannot tell which
+  side is right, it does nothing. A cycle runs in one of two modes:
 
-    1. Picks a random peer.
-    2. Builds a bucket-hashed digest (1024 fixed buckets, XOR of key/value
-       hashes) of the local cache.
-    3. Fetches the peer's digest via RPC.
-    4. Compares digests to find divergent buckets.
-    5. For divergent buckets, fetches the peer's actual entries (with TTLs).
-    6. Writes them through the inbox, preserving "newer version wins"
-       conflict resolution.
+    * _**Steady state**_: the two nodes compare their version logs (see
+      ["Conflict resolution"](#module-conflict-resolution)) by bucket,
+      limited to the changes younger than half the version window. For the
+      buckets that differ, the node takes the peer's changes that are newer
+      than its own, with their versions: a delete is applied as a delete,
+      and a put with the value and TTL the peer holds. The changes go
+      through the inbox, under the same rule as replication. A node that
+      logged a change and later evicted the entry does not take it back,
+      since the peer offers the same version, so size and memory limits keep
+      working. The cost of a cycle follows the write rate, not the size of
+      the cache, and an idle cluster exchanges almost nothing.
 
-  This approach is based on the anti-entropy reconciliation technique
-  originally described in the Amazon Dynamo paper (DeCandia et al., 2007)
-  and widely adopted by distributed databases like Apache Cassandra and
-  Riak. The specific implementation follows Riak's Active Anti-Entropy
-  (AAE) design most closely: instead of building a full Merkle tree over
-  individual keys (expensive to build and compare), keys are hashed into
-  a fixed number of buckets and each bucket stores the XOR of its
-  key/value hashes. This bucket-based approach provides precise
-  divergence detection with minimal overhead — only the entries in
-  divergent buckets need to be fetched and compared.
+    * _**Catch-up**_: the two nodes compare their whole caches by bucket
+      (1024 buckets, each one the XOR of the hashes of its keys and
+      values). The peer sends the keys of the buckets that differ, and the
+      node fetches and writes the entries it has no value for and no logged
+      change about. It never overwrites a value. Catch-up runs when the node
+      starts (from the first cycle, one interval after start, so it does not
+      overlap the bootstrap push) and when a partition heals, that is, when
+      a peer process leaves and comes back. It stops after a pass that
+      repairs nothing, or after three passes.
+
+  Every transfer is chunked by `:bootstrap_chunk_size`.
+
+  The bucket digest follows the design of Riak's Active Anti-Entropy:
+  keys are hashed into a fixed number of buckets, and only the buckets
+  that differ are compared further.
+
+  ### Limits
+
+  The version log only covers the version window, so anti-entropy leaves
+  older differences alone. They are settled by the TTL or by the next
+  write, so give the entries a TTL if they must not stay stale:
+
+    * Old values that differ between nodes stay until the TTL or the next
+      write. Anti-entropy does not copy a peer's value over a different
+      local one.
+    * A delete older than the version window that a node missed can come
+      back during a catch-up.
+    * An old key missing on one node after a catch-up stays missing. On a
+      node with a size limit, that key was probably evicted.
 
   ### Configuration
 
@@ -587,7 +613,7 @@ defmodule Nebulex.Adapters.Replicated do
           anti_entropy_interval: :timer.minutes(1)
         ]
 
-  Omit `:anti_entropy_interval` to disable (default).
+  Set `anti_entropy_interval: false` to disable it.
 
   ## Caveats
 
@@ -757,7 +783,7 @@ defmodule Nebulex.Adapters.Replicated do
       replication_retries: Keyword.fetch!(replication_opts, :retries),
       replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay),
       bootstrap_chunk_size: Keyword.fetch!(replication_opts, :bootstrap_chunk_size),
-      anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval),
+      anti_entropy_interval: Keyword.fetch!(replication_opts, :anti_entropy_interval),
       rt_buffer_opts: rt_buffer_opts(replication_opts),
       version_log: VersionLog.name(name),
       version_window: version_window(replication_opts)
@@ -1081,7 +1107,6 @@ defmodule Nebulex.Adapters.Replicated do
     replication_opts
     |> Keyword.take([:interval, :timeout, :retries, :retry_delay, :anti_entropy_interval])
     |> Map.new()
-    |> Map.put_new(:anti_entropy_interval, nil)
     |> VersionLog.window()
   end
 

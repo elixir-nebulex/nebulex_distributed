@@ -53,7 +53,7 @@ is in `lib/` and `test/`.
   processor is the one place that applies a change from another node) and
   streams the bootstrap entries, `ClusterMonitor` watches node joins and
   elects the bootstrap leader, and `AntiEntropy` runs the reconciliation
-  cycle.
+  cycles (steady state on the version logs, catch-up on the whole cache).
 
 ---
 

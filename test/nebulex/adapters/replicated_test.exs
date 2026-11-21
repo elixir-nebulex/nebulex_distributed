@@ -9,7 +9,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
   alias Nebulex.Adapter
   alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
-  alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{ReplicatedCache, ReplicatedNilCache}
   alias Nebulex.Telemetry
   alias Nebulex.Utils
@@ -618,7 +617,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
     end
   end
 
-  describe "anti-entropy" do
+  describe "anti-entropy functions called by nodes on the previous release" do
     test "build_buckets returns a list of 1024 bucket hashes" do
       adapter_meta = Adapter.lookup_meta(@cache_name)
 
@@ -688,149 +687,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert Keyword.has_key?(opts, :ttl)
     end
 
-    test "do_reconcile repairs divergent entries from peer", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node's primary (bypass replication)
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_direct_key, "direct_value", []]
-      ])
-
-      # Verify key does NOT exist locally
-      assert ReplicatedCache.get(:ae_direct_key) == {:ok, nil}
-
-      # Call do_reconcile directly (in test process, ensures coverage)
-      {repaired, divergent_buckets} = AntiEntropy.do_reconcile(remote_node, adapter_meta)
-
-      assert repaired > 0
-      assert divergent_buckets > 0
-
-      # Wait for inbox processing
-      assert_eventually fn ->
-        assert ReplicatedCache.get!(:ae_direct_key) == "direct_value"
-      end
-    end
-
-    test "reconcile repairs divergent keys from peer", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node's primary (bypass replication)
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_repair_key, "repaired_value", []]
-      ])
-
-      # Verify key does NOT exist locally
-      assert ReplicatedCache.get(:ae_repair_key) == {:ok, nil}
-
-      # Start anti-entropy for this test (it's not started by default)
-      ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-      {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-      # Wait for at least one cycle to run
-      :ok = Process.sleep(700)
-
-      # Key should now be repaired locally via inbox
-      assert_eventually fn ->
-        assert ReplicatedCache.get!(:ae_repair_key) == "repaired_value"
-      end
-
-      # Cleanup
-      GenServer.stop(ae_pid)
-    end
-
-    test "anti-entropy emits telemetry span events", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node to create divergence
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_tel_key, "tel_value", []]
-      ])
-
-      started = @telemetry_prefix ++ [:anti_entropy, :start]
-      stopped = @telemetry_prefix ++ [:anti_entropy, :stop]
-
-      with_telemetry_handler __MODULE__, [started, stopped], fn ->
-        ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-        {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-        assert_receive {^started, %{system_time: _}, %{adapter_meta: _, node: node, peer: peer}},
-                       5000
-
-        assert node == node()
-
-        pg_nodes = Cluster.pg_nodes(adapter_meta.pg_group)
-
-        assert peer in Enum.reject(pg_nodes, &(&1 == node()))
-
-        assert_receive {^stopped, %{duration: _},
-                        %{
-                          adapter_meta: _,
-                          node: _,
-                          peer: _,
-                          repaired: repaired,
-                          divergent_buckets: divergent_buckets
-                        }},
-                       5000
-
-        assert is_integer(repaired)
-        assert is_integer(divergent_buckets)
-
-        GenServer.stop(ae_pid)
-      end
-    end
-
-    test "anti-entropy with no peers does nothing" do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 100)
-
-      # Temporarily leave the PG group so there are no peers
-      :ok = Cluster.leave(adapter_meta.pg_group)
-
-      {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-      # Wait for a cycle — should not crash
-      :ok = Process.sleep(200)
-
-      assert Process.alive?(ae_pid)
-
-      GenServer.stop(ae_pid)
-
-      # Rejoin
-      :ok = Cluster.join(adapter_meta.pg_group)
-    end
-
-    test "reconcile does nothing when caches are in sync", %{name: name, cluster: cluster} do
-      # Put data and wait for replication so all nodes are in sync
-      assert ReplicatedCache.put(:ae_sync1, "v1") == :ok
-      assert ReplicatedCache.put(:ae_sync2, "v2") == :ok
-
-      assert_remote_nodes(cluster, :get!, [name, :ae_sync1, nil, []], fn result ->
-        assert result == "v1"
-      end)
-
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      stopped = @telemetry_prefix ++ [:anti_entropy, :stop]
-
-      with_telemetry_handler __MODULE__, [stopped], fn ->
-        ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-        {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-        assert_receive {^stopped, %{duration: _}, %{repaired: 0, divergent_buckets: 0}},
-                       5000
-
-        GenServer.stop(ae_pid)
-      end
-    end
-
     test "entries_for_buckets skips entries when TTL lookup fails" do
       primary = ReplicatedCache.__primary__()
       adapter_meta = Adapter.lookup_meta(@cache_name)
@@ -859,38 +715,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       # :ae_ttl_fail should be filtered out
       refute Map.has_key?(entries_map, :ae_ttl_fail)
       assert Map.has_key?(entries_map, :ae_ttl_ok)
-    end
-
-    test "anti-entropy is not started when interval is not configured" do
-      # The default setup doesn't set anti_entropy_interval,
-      # so AntiEntropy should not be in the supervision tree
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-
-      ae_name = Utils.camelize_and_concat([@cache_name, "AntiEntropy"])
-
-      assert Process.whereis(ae_name) == nil
-      assert adapter_meta[:anti_entropy_interval] == nil
-    end
-
-    test "cache started with anti_entropy_interval runs the GenServer" do
-      cache_name = :replicated_ae_cache
-
-      cache_opts = [
-        name: cache_name,
-        replication: [interval: 100, anti_entropy_interval: 500]
-      ]
-
-      {:ok, pid} = ReplicatedCache.start_link(cache_opts)
-
-      # The GenServer name uses the bare "AntiEntropy" atom
-      ae_name = Utils.camelize_and_concat([cache_name, "AntiEntropy"])
-
-      ae_pid = Process.whereis(ae_name)
-
-      assert ae_pid != nil
-      assert Process.alive?(ae_pid)
-
-      Supervisor.stop(pid)
     end
   end
 
