@@ -450,7 +450,7 @@ defmodule Nebulex.Adapters.MultilevelInclusiveTest do
         )
 
       # check cluster nodes
-      assert_eventually fn ->
+      wait_until fn ->
         assert L3.nodes(:multilevel_inclusive_l3) |> Enum.sort() == [node, node()] |> Enum.sort()
       end
 

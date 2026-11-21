@@ -23,7 +23,7 @@ defmodule Nebulex.Adapters.PartitionedNodeFilterTest do
           [{PartitionedCache, name: :partitioned_no_selector}]
         )
 
-      assert_eventually fn ->
+      wait_until fn ->
         assert PartitionedCache.nodes(:partitioned_no_selector) |> Enum.sort() == Enum.sort(nodes)
       end
 
@@ -42,7 +42,7 @@ defmodule Nebulex.Adapters.PartitionedNodeFilterTest do
 
       expected_ring_nodes = Enum.reject(nodes, &(&1 == @primary))
 
-      assert_eventually fn ->
+      wait_until fn ->
         ring_nodes = PartitionedCache.nodes(:partitioned_selector)
 
         assert Enum.sort(ring_nodes) == Enum.sort(expected_ring_nodes)
@@ -75,7 +75,7 @@ defmodule Nebulex.Adapters.PartitionedNodeFilterTest do
           ]
         )
 
-      assert_eventually fn ->
+      wait_until fn ->
         assert PartitionedCache.nodes(:partitioned_all_excluded) == []
       end
 
