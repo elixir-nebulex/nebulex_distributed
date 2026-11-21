@@ -9,11 +9,13 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
   # through the `:bootstrap` telemetry span and never drops a joined node from the view.
   use Nebulex.NodeCase, async: false
 
+  import Mimic, only: [call_original: 3, stub: 3]
   import Nebulex.CacheCase, only: [wait_until: 1, with_telemetry_handler: 3]
 
+  alias Nebulex.Adapter
   alias Nebulex.Adapters.Replicated
   alias Nebulex.Adapters.Replicated.{ClusterMonitor, Replicator}
-  alias Nebulex.Distributed.Cluster
+  alias Nebulex.Distributed.{Cluster, RPC}
   alias Nebulex.Distributed.TestCache.ReplicatedCache
   alias Nebulex.Telemetry
   alias Nebulex.TestTelemetryRelay
@@ -93,30 +95,37 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
     test "keeps every node in the batch in the view when a push raises", %{
       doomed_target: doomed_target
     } do
-      monitor = monitor_pid(@node1)
-      %{pg_ref: pg_ref, adapter_meta: %{pg_group: pg_group}} = monitor_state(@node1)
       node2_member = monitor_pid(@node2)
+      candidates = [@node1, @node3, node()]
 
-      watch(@node1, :exception)
+      for node <- candidates, do: watch(node, :exception)
 
       # Nodes 2 and 4 restart: their leaves are applied, then both rejoins arrive in one
-      # :pg batch. The push to node4 raises.
-      send(monitor, {pg_ref, :leave, pg_group, [doomed_target, node2_member]})
-      send(monitor, {pg_ref, :join, pg_group, [doomed_target, node2_member]})
+      # :pg batch on every other node. The push to node4 raises.
+      for node <- candidates do
+        %{pg_ref: pg_ref, adapter_meta: %{pg_group: pg_group}} = monitor_state(node)
+
+        send(monitor_pid(node), {pg_ref, :leave, pg_group, [doomed_target, node2_member]})
+        send(monitor_pid(node), {pg_ref, :join, pg_group, [doomed_target, node2_member]})
+      end
 
       # The state is read with a call, so it is answered after both messages were handled.
-      %{cluster_nodes: view} = monitor_state(@node1)
+      for node <- candidates do
+        %{cluster_nodes: view} = monitor_state(node)
 
-      assert MapSet.member?(view, @node2) == true
-      assert MapSet.member?(view, @node4) == true
+        assert MapSet.member?(view, @node2) == true
+        assert MapSet.member?(view, @node4) == true
+      end
 
-      # The failure is reported, not swallowed.
-      assert_receive {@bootstrap_exception, _measurements, %{node: @node1, peer: @node4}},
+      # The failure is reported, not swallowed, by the one node that pushes to node4.
+      assert_receive {@bootstrap_exception, _measurements, %{node: pusher, peer: @node4}},
                      @timeout
 
+      assert pusher in candidates
+      refute_receive {@bootstrap_exception, _measurements, %{peer: @node4}}, 500
+
       # The monitor is still alive and serving.
-      assert monitor_pid(@node1) == monitor
-      assert @node2 in rpc(@node1, Cluster, :pg_nodes, [pg_group])
+      assert @node2 in rpc(pusher, Cluster, :pg_nodes, [monitor_state(pusher).pg_group])
     end
 
     test "keeps pushing to the other joiners when one push raises", %{
@@ -148,43 +157,81 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
       end
     end
 
-    test "elects exactly one pusher from live membership even when a view is stale" do
-      # node2 forgets node1 in its own view, the way a lost join batch would leave it.
-      monitor = monitor_pid(@node2)
-      %{pg_ref: pg_ref, adapter_meta: %{pg_group: pg_group}} = monitor_state(@node2)
+    test "one join gets exactly one pusher, and different joiners get different ones" do
+      for node <- [node() | Node.list()], do: watch(node, :start)
 
-      send(monitor, {pg_ref, :leave, pg_group, [monitor_pid(@node1)]})
+      # The smallest name (node1) would serve both of these joiners.
+      pusher2 = restart_and_wait_for_pusher(@node2)
+      pusher3 = restart_and_wait_for_pusher(@node3)
 
-      %{cluster_nodes: view} = monitor_state(@node2)
-      assert MapSet.member?(view, @node1) == false
-      assert Enum.min(view) == @node2
+      assert pusher2 != pusher3
+    end
+  end
 
-      # Watch the bootstrap spans on both candidates.
-      watch(@node1, :start)
-      watch(@node2, :start)
+  describe "push_to_new_node/2" do
+    setup do
+      for i <- 1..4, do: :ok = ReplicatedCache.put({:push, i}, i)
 
-      # A genuine join: node3 restarts its cache.
-      :ok =
-        rpc(@node3, Supervisor, :stop, [
-          rpc(@node3, Process, :whereis, [@cache_name]),
-          :normal,
-          @timeout
-        ])
+      {:ok, adapter_meta: Adapter.lookup_meta(@cache_name)}
+    end
 
-      {:ok, _pid} =
-        start_cache(@node3, ReplicatedCache, name: @cache_name, replication: [interval: 100])
+    test "stops at the first chunk that fails", %{adapter_meta: adapter_meta} do
+      fake_node = :"nonexistent@127.0.0.1"
+      test_pid = self()
 
-      # The real leader pushes, node2 does not.
-      assert_receive {@bootstrap_start, _measurements, %{node: @node1, peer: @node3}}, @timeout
-      refute_receive {@bootstrap_start, _measurements, %{node: @node2, peer: @node3}}, 500
+      stub(RPC, :call, fn node, mod, fun, args, timeout ->
+        send(test_pid, {:rpc_call, fun})
 
-      # And node2's view has caught up through the join it just saw.
-      %{cluster_nodes: view} = monitor_state(@node2)
-      assert MapSet.member?(view, @node3) == true
+        call_original(RPC, :call, [node, mod, fun, args, timeout])
+      end)
+
+      adapter_meta = %{adapter_meta | bootstrap_chunk_size: 2}
+
+      with_telemetry_handler __MODULE__, [@bootstrap_stop], fn ->
+        ClusterMonitor.push_to_new_node(fake_node, adapter_meta)
+
+        assert_receive {@bootstrap_stop, _measurements,
+                        %{peer: ^fake_node, total: 0, errors: [{{:error, _}, ^fake_node}]}}
+      end
+
+      assert_received {:rpc_call, :apply_bootstrap_entries}
+      refute_received {:rpc_call, :apply_bootstrap_entries}
+    end
+
+    test "reports the delivered entries and whether anti-entropy is on", %{
+      adapter_meta: adapter_meta
+    } do
+      total = ReplicatedCache.count_all!()
+
+      with_telemetry_handler __MODULE__, [@bootstrap_stop], fn ->
+        ClusterMonitor.push_to_new_node(@node1, %{adapter_meta | bootstrap_chunk_size: 2})
+
+        assert_receive {@bootstrap_stop, _measurements,
+                        %{peer: @node1, total: ^total, errors: [], anti_entropy: true}}
+
+        ClusterMonitor.push_to_new_node(@node1, %{adapter_meta | anti_entropy_interval: false})
+
+        assert_receive {@bootstrap_stop, _measurements, %{peer: @node1, anti_entropy: false}}
+      end
     end
   end
 
   ## Helpers
+
+  # Restarts the cache on `node`, waits for the bootstrap push to it, and
+  # checks that no other node pushes.
+  defp restart_and_wait_for_pusher(node) do
+    :ok =
+      rpc(node, Supervisor, :stop, [rpc(node, Process, :whereis, [@cache_name]), :normal, @timeout])
+
+    {:ok, _pid} =
+      start_cache(node, ReplicatedCache, name: @cache_name, replication: [interval: 100])
+
+    assert_receive {@bootstrap_start, _measurements, %{node: pusher, peer: ^node}}, @timeout
+    refute_receive {@bootstrap_start, _measurements, %{peer: ^node}}, 500
+
+    pusher
+  end
 
   defp watch(node, suffix) do
     :ok =

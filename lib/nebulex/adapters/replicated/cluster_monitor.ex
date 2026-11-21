@@ -80,8 +80,12 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
     # `:pg` (events still queued, or an earlier join batch lost to a failed
     # push) and a stale view elects extra pushers; `:pg` converges as soon as
     # the connection is up.
-    if MapSet.size(new_nodes) > 0 and leader?(pusher_candidates(pg_group, new_nodes)) do
-      Enum.each(new_nodes, &safe_push(&1, adapter_meta))
+    if MapSet.size(new_nodes) > 0 do
+      candidates = pusher_candidates(pg_group, new_nodes)
+
+      new_nodes
+      |> Enum.filter(&pusher?(candidates, &1))
+      |> Enum.each(&safe_push(&1, adapter_meta))
     end
 
     # The view is updated regardless of what the pushes do, so a failing push
@@ -123,31 +127,40 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
     metadata = %{adapter_meta: adapter_meta, node: node(), peer: new_node}
 
     Telemetry.span(event, metadata, fn ->
-      total = Replicator.push_entries(new_node, adapter_meta)
+      {total, errors} = Replicator.push_entries(new_node, adapter_meta)
 
-      {total, Map.put(metadata, :total, total)}
+      {{total, errors},
+       Map.merge(metadata, %{
+         total: total,
+         errors: errors,
+         anti_entropy: is_integer(adapter_meta.anti_entropy_interval)
+       })}
     end)
   end
 
   ## Private functions
 
   # Every node `:pg` currently knows for the group, except the nodes in the
-  # join batch being handled: a joiner may well have the smallest name, but
-  # it has nothing to push. This node is always a candidate: it is a member
-  # of the group and its own join never reaches the handler as a new node.
+  # join batch being handled, which have nothing to push. This node is
+  # always a candidate: it is a member of the group and its own join never
+  # reaches the handler as a new node.
   defp pusher_candidates(pg_group, new_nodes) do
     pg_group
     |> Cluster.pg_nodes()
     |> Enum.reject(&MapSet.member?(new_nodes, &1))
+    |> Enum.sort()
   end
 
-  # Simple leader election: the candidate with the smallest name (Erlang term
-  # ordering) pushes. Every node evaluates it against the same `:pg`
-  # membership, so they agree as soon as `:pg` has converged. If memberships
-  # temporarily diverge, the worst case is zero or multiple pushers, both
-  # safe: `:put_new` is idempotent, and anti-entropy repairs any remaining
-  # gaps.
-  defp leader?(candidates), do: node() == Enum.min(candidates)
+  # The pusher for a joiner is picked by a hash of the joiner over the
+  # sorted candidates, so the pushes of a rollout are spread across the
+  # nodes. Every node evaluates it against the same `:pg` membership, so
+  # they agree as soon as `:pg` has converged. If memberships temporarily
+  # diverge (or a node on the previous release elects by smallest name),
+  # the worst case is zero or two pushers, both safe: bootstrap entries are
+  # gap fills, and the anti-entropy catch-up fills what is missing.
+  defp pusher?(candidates, new_node) do
+    node() == Enum.at(candidates, :erlang.phash2(new_node, length(candidates)))
+  end
 
   # The pushes run one after another in this process. A push that raises
   # (for example, the target raising mid-bootstrap) is reported by the

@@ -61,25 +61,27 @@ defmodule Nebulex.Adapters.Replicated.Replicator do
   def push_entries(target_node, adapter_meta) do
     # Stream the local cache in chunks and ship one RPC per chunk so peak
     # heap on both sender and receiver stays bounded regardless of total
-    # cache size. Each entry is converted from `:put` to `:put_new` so the
-    # bootstrap doesn't overwrite data the target already received via
-    # normal replication.
+    # cache size. The target applies the entries as gap fills. The push
+    # stops at the first chunk that fails: a target that does not answer
+    # would cost one timeout per chunk, and the anti-entropy catch-up fills
+    # what is left.
     adapter_meta
     |> stream_entries()
     |> Stream.chunk_every(adapter_meta.bootstrap_chunk_size)
-    |> Enum.reduce(0, fn chunk, total ->
+    |> Enum.reduce_while({0, []}, fn chunk, {total, []} ->
       bootstrap_chunk =
         Enum.map(chunk, fn {key, {:put, args}} -> {key, {:put_new, args}} end)
 
-      RPC.call(
-        target_node,
-        __MODULE__,
-        :apply_bootstrap_entries,
-        [adapter_meta, bootstrap_chunk],
-        adapter_meta.replication_timeout
-      )
-
-      total + length(bootstrap_chunk)
+      case RPC.call(
+             target_node,
+             __MODULE__,
+             :apply_bootstrap_entries,
+             [adapter_meta, bootstrap_chunk],
+             adapter_meta.replication_timeout
+           ) do
+        :ok -> {:cont, {total + length(bootstrap_chunk), []}}
+        error -> {:halt, {total, [{error, target_node}]}}
+      end
     end)
   end
 

@@ -109,24 +109,25 @@ defmodule Nebulex.Adapters.Replicated do
     1. New node joins the `:pg` group.
     2. All existing `ClusterMonitor` processes receive the `:join` event
        via `:pg.monitor_scope/1`.
-    3. A simple leader election (smallest node name by Erlang term
-       ordering among the current `:pg` members other than the joiner)
-       ensures exactly one existing node pushes data, avoiding
-       duplicate work.
-    4. The leader streams its local cache entries to the new node via
-       RPC. The new node applies them as gap fills: an entry is written
-       only if the new node has no value for the key and has not seen a
-       change to it (or a flush) within the version window, so it keeps
-       whatever it received via normal replication in the meantime. The
-       pushes run one after another; a failure is reported through the
-       `:bootstrap` telemetry span (`:exception` event) and does not
-       affect the monitor's cluster view or the pushes to other joiners.
+    3. One existing node pushes to each joiner. It is picked by a hash of
+       the joiner over the sorted `:pg` members other than the joiners, so
+       the pushes of a rollout are spread across the nodes.
+    4. The pusher streams its local cache entries to the new node via
+       RPC, in chunks of `:bootstrap_chunk_size`. The new node applies
+       them as gap fills: an entry is written only if the new node has no
+       value for the key and has not seen a change to it (or a flush)
+       within the version window, so it keeps whatever it received via
+       normal replication in the meantime. The push stops at the first
+       chunk that fails, with no retry. The pushes run one after another;
+       a failure is reported through the `:bootstrap` telemetry span and
+       does not affect the monitor's cluster view or the pushes to other
+       joiners.
     5. If the primary storage adapter is `Nebulex.Adapters.Local`, the
        new node resets the GC interval on all cluster nodes to
        synchronize generation rotation and prevent premature eviction.
     6. After bootstrap, new writes propagate automatically via the
-       normal replication flow. Anti-entropy reconciliation (if enabled)
-       repairs any entries missed during bootstrap.
+       normal replication flow. Bootstrap is a best-effort warm-up: the
+       anti-entropy catch-up fills the entries a failed push left out.
 
   ## Conflict resolution
 
@@ -409,7 +410,8 @@ defmodule Nebulex.Adapters.Replicated do
         ```
 
     * `telemetry_prefix ++ [:bootstrap, :stop]` - Dispatched when
-      the bootstrap push completes successfully.
+      the bootstrap push ends, whether every chunk was delivered or the
+      push stopped at a chunk that failed.
 
       * Measurements: `%{duration: non_neg_integer}`
       * Metadata:
@@ -419,9 +421,18 @@ defmodule Nebulex.Adapters.Replicated do
           adapter_meta: %{optional(atom) => term},
           node: atom,
           peer: atom,
-          total: non_neg_integer
+          total: non_neg_integer,
+          errors: [{term, atom}],
+          anti_entropy: boolean
         }
         ```
+
+      `:total` is the number of entries delivered. `:errors` is empty when
+      every chunk was delivered, or holds the `{error, node}` tuple of the
+      chunk that failed, in the shape the `:replication` span uses.
+      `:anti_entropy` says whether anti-entropy is enabled, so a handler
+      can alert when a push fails and there is no catch-up to fill the
+      gap.
 
     * `telemetry_prefix ++ [:bootstrap, :exception]` - Dispatched when
       the bootstrap push raises an exception.

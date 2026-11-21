@@ -448,7 +448,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert ReplicatedCache.put(:pe_key3, "value3") == :ok
 
       # Push entries to the remote peer using put_new
-      assert Replicator.push_entries(remote_node, adapter_meta) >= 3
+      assert Replicator.push_entries(remote_node, adapter_meta) == {3, []}
 
       # Wait for the remote node to process entries
       assert_eventually fn ->
@@ -476,7 +476,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       fake_node = :"nonexistent@127.0.0.1"
 
       # No data locally, push_entries should return 0 without making any RPC
-      assert Replicator.push_entries(fake_node, adapter_meta) == 0
+      assert Replicator.push_entries(fake_node, adapter_meta) == {0, []}
     end
 
     test "push_entries does not overwrite existing data on target (put_new semantics)",
@@ -495,7 +495,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert ReplicatedCache.put(:pn_existing, "local_value") == :ok
 
       # Push entries to the remote peer — should NOT overwrite remote_value
-      assert Replicator.push_entries(remote_node, adapter_meta) >= 1
+      assert Replicator.push_entries(remote_node, adapter_meta) == {1, []}
 
       # Remote node should still have the original value (put_new is a no-op)
       assert_eventually fn ->
@@ -610,9 +610,9 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
         assert pusher == node()
 
-        assert_receive {^stopped, %{duration: _}, %{adapter_meta: _, total: total}}, 5000
-
-        assert is_integer(total) and total >= 1
+        assert_receive {^stopped, %{duration: _},
+                        %{adapter_meta: _, total: 1, errors: [], anti_entropy: true}},
+                       5000
       end
     end
   end

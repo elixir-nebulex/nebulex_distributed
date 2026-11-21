@@ -52,8 +52,9 @@ is in `lib/` and `test/`.
   recently, `Replicator` processes the outbox/inbox batches (the inbox
   processor is the one place that applies a change from another node) and
   streams the bootstrap entries, `ClusterMonitor` watches node joins and
-  elects the bootstrap leader, and `AntiEntropy` runs the reconciliation
-  cycles (steady state on the version logs, catch-up on the whole cache).
+  pushes the bootstrap entries to the joiners it is picked for, and
+  `AntiEntropy` runs the reconciliation cycles (steady state on the version
+  logs, catch-up on the whole cache).
 
 ---
 
