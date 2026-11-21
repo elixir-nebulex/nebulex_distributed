@@ -4,12 +4,12 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
   #
   # The pusher is elected among the nodes `:pg` knows at the time of the join, not from
   # the monitor's own view, so a stale view cannot elect extra pushers. The view is
-  # updated before the pushes run, and the pushes run in supervised tasks, so a push that
+  # updated before the pushes run, and each push is rescued on its own, so a push that
   # raises (for example the target raising inside `apply_bootstrap_entries/2`) is reported
   # through the `:bootstrap` telemetry span and never drops a joined node from the view.
   use Nebulex.NodeCase, async: false
 
-  import Nebulex.CacheCase, only: [wait_until: 1]
+  import Nebulex.CacheCase, only: [wait_until: 1, with_telemetry_handler: 3]
 
   alias Nebulex.Adapters.Replicated
   alias Nebulex.Adapters.Replicated.{ClusterMonitor, Replicator}
@@ -23,6 +23,7 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
   @cache_name :replicated_leader_cache
   @telemetry_prefix Telemetry.default_prefix(ReplicatedCache)
   @bootstrap_start @telemetry_prefix ++ [:bootstrap, :start]
+  @bootstrap_stop @telemetry_prefix ++ [:bootstrap, :stop]
   @bootstrap_exception @telemetry_prefix ++ [:bootstrap, :exception]
 
   # Erlang term order on node names: node1 < node2 < node3 < node4 < primary.
@@ -116,6 +117,35 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
       # The monitor is still alive and serving.
       assert monitor_pid(@node1) == monitor
       assert @node2 in rpc(@node1, Cluster, :pg_nodes, [pg_group])
+    end
+
+    test "keeps pushing to the other joiners when one push raises", %{
+      doomed_target: doomed_target
+    } do
+      monitor = monitor_pid(node())
+      %{pg_ref: pg_ref, adapter_meta: %{pg_group: pg_group}} = monitor_state(node())
+      others = for node <- [@node1, @node2, @node3], do: monitor_pid(node)
+      joiners = [doomed_target | others]
+
+      with_telemetry_handler __MODULE__, [@bootstrap_stop, @bootstrap_exception], fn ->
+        # Every peer restarts at once, so this node is the only pusher left.
+        send(monitor, {pg_ref, :leave, pg_group, joiners})
+        send(monitor, {pg_ref, :join, pg_group, joiners})
+
+        %{cluster_nodes: view} = monitor_state(node())
+
+        for node <- [@node1, @node2, @node3, @node4] do
+          assert MapSet.member?(view, node) == true
+        end
+
+        assert_receive {@bootstrap_exception, _measurements, %{peer: @node4}}, @timeout
+
+        for node <- [@node1, @node2, @node3] do
+          assert_receive {@bootstrap_stop, _measurements, %{peer: ^node}}, @timeout
+        end
+
+        assert monitor_pid(node()) == monitor
+      end
     end
 
     test "elects exactly one pusher from live membership even when a view is stale" do

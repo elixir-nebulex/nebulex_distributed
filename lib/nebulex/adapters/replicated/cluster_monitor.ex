@@ -10,7 +10,7 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
   alias Nebulex.Telemetry
 
   # State
-  defstruct [:adapter_meta, :pg_group, :pg_ref, :cluster_nodes, :task_supervisor]
+  defstruct [:adapter_meta, :pg_group, :pg_ref, :cluster_nodes]
 
   ## API
 
@@ -19,12 +19,6 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
     name = camelize_and_concat([name, ClusterMonitor])
 
     GenServer.start_link(__MODULE__, adapter_meta, name: name)
-  end
-
-  @doc false
-  @spec task_supervisor_name(map()) :: atom()
-  def task_supervisor_name(%{name: name}) do
-    camelize_and_concat([name, "BootstrapTasks"])
   end
 
   ## GenServer Callbacks
@@ -44,8 +38,7 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
       adapter_meta: adapter_meta,
       pg_group: pg_group,
       pg_ref: pg_ref,
-      cluster_nodes: MapSet.new([node()]),
-      task_supervisor: task_supervisor_name(adapter_meta)
+      cluster_nodes: MapSet.new([node()])
     }
 
     {:ok, state, {:continue, :post_join}}
@@ -72,8 +65,7 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
           pg_ref: pg_ref,
           pg_group: pg_group,
           adapter_meta: adapter_meta,
-          cluster_nodes: cluster_nodes,
-          task_supervisor: task_supervisor
+          cluster_nodes: cluster_nodes
         } = state
       ) do
     # Calculate the difference between the new nodes and the cluster nodes
@@ -89,7 +81,7 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
     # push) and a stale view elects extra pushers; `:pg` converges as soon as
     # the connection is up.
     if MapSet.size(new_nodes) > 0 and leader?(pusher_candidates(pg_group, new_nodes)) do
-      Enum.each(new_nodes, &start_push(task_supervisor, &1, adapter_meta))
+      Enum.each(new_nodes, &safe_push(&1, adapter_meta))
     end
 
     # The view is updated regardless of what the pushes do, so a failing push
@@ -157,17 +149,16 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
   # gaps.
   defp leader?(candidates), do: node() == Enum.min(candidates)
 
-  # The push runs in its own supervised task, so a failure (the target raising
-  # mid-bootstrap, a dropped connection, a timeout) is reported through the
-  # task and the `:bootstrap` telemetry span's `:exception` event instead of
-  # blocking or corrupting this process.
-  defp start_push(task_supervisor, new_node, adapter_meta) do
-    _ =
-      Task.Supervisor.start_child(task_supervisor, fn ->
-        push_to_new_node(new_node, adapter_meta)
-      end)
+  # The pushes run one after another in this process. A push that raises
+  # (for example, the target raising mid-bootstrap) is reported by the
+  # `:bootstrap` span's `:exception` event and rescued here, so it neither
+  # crashes the monitor nor stops the pushes to the other joiners.
+  defp safe_push(new_node, adapter_meta) do
+    _ = push_to_new_node(new_node, adapter_meta)
 
     :ok
+  rescue
+    _error -> :ok
   end
 
   defp maybe_reset_gc_interval(%{cache: cache} = adapter_meta, cluster_nodes) do
