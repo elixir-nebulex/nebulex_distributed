@@ -3,7 +3,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
 
   use Supervisor
 
-  alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
+  alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator, VersionLog}
   alias Tidefall.HashMap, as: HM
 
   ## API
@@ -22,6 +22,7 @@ defmodule Nebulex.Adapters.Replicated.Supervisor do
     children =
       [
         {primary, primary_opts},
+        {VersionLog, adapter_meta},
         Supervisor.child_spec(
           {HM,
            Keyword.merge(buffer_opts,

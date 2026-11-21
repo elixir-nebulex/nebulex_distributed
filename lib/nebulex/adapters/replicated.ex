@@ -8,7 +8,8 @@ defmodule Nebulex.Adapters.Replicated do
     * Zero-latency local reads — all data is replicated on every node.
     * Writes are applied locally and replicated to all peers via buffered RPC.
     * Double-buffered outbox and inbox for high-throughput batched replication.
-    * "Newer version wins" conflict resolution via wall-clock versioning.
+    * "Newer version wins" conflict resolution via wall-clock versions and a
+      per-node version log.
     * Optional anti-entropy reconciliation to detect and repair data drift.
     * Configurable primary storage adapter.
 
@@ -29,11 +30,9 @@ defmodule Nebulex.Adapters.Replicated do
       change is buffered in an outbox and periodically pushed to all peer
       nodes in a single batched RPC call.
 
-    * _**Conflict Resolution**_: Uses wall-clock versioning
-      (`System.system_time()`) with "newer version wins" semantics.
-      Timestamps are comparable across nodes (assuming NTP sync),
-      so concurrent writes to the same key are resolved correctly
-      regardless of which node originated the write.
+    * _**Conflict Resolution**_: Every change gets a wall-clock version
+      (`System.system_time()`), and the change with the highest version
+      wins on every node. See ["Conflict resolution"](#module-conflict-resolution).
 
     * _**Double-Buffered I/O**_: Both outbox (sending) and inbox (receiving)
       are backed by `Tidefall.HashMap`, which provides double-buffered
@@ -84,12 +83,13 @@ defmodule Nebulex.Adapters.Replicated do
 
     1. Node A modifies a cache entry (e.g., `Cache.put("key", value)`).
     2. The value is written to the local primary cache immediately.
-    3. The command is written to the inbox (tagged `:local`, for conflict
-       resolution) and to the outbox.
+    3. The command is written to the inbox (tagged `:local`, so the node
+       records its version without applying it again) and to the outbox.
     4. On the next outbox flush cycle, all buffered commands are sent to
        peer inbox buffers via a single `RPC.multicall` with `put_all_newer`.
-    5. On each peer, the inbox applies remote commands to the local
-       primary cache (skipping `:local` entries).
+    5. On each peer, the inbox applies a remote command to the local
+       primary cache only if its version is newer than the one the node
+       has for the key.
 
   ### Read flow
 
@@ -114,9 +114,10 @@ defmodule Nebulex.Adapters.Replicated do
        ensures exactly one existing node pushes data, avoiding
        duplicate work.
     4. The leader streams its local cache entries to the new node via
-       RPC, using `:put_new` commands — entries are written only if
-       the key does not already exist on the new node, preserving any
-       data it received via normal replication in the meantime. The
+       RPC. The new node applies them as gap fills: an entry is written
+       only if the new node has no value for the key and has not seen a
+       change to it (or a flush) within the version window, so it keeps
+       whatever it received via normal replication in the meantime. The
        pushes run one after another; a failure is reported through the
        `:bootstrap` telemetry span (`:exception` event) and does not
        affect the monitor's cluster view or the pushes to other joiners.
@@ -126,6 +127,36 @@ defmodule Nebulex.Adapters.Replicated do
     6. After bootstrap, new writes propagate automatically via the
        normal replication flow. Anti-entropy reconciliation (if enabled)
        repairs any entries missed during bootstrap.
+
+  ## Conflict resolution
+
+  Each node keeps a version log: for every key changed recently, the
+  version and the kind (put or delete) of its last change, plus the
+  version of the last flush (`delete_all` with no query). A change from a
+  peer is applied only when its version is greater than the logged one for
+  the key and than the last flush. Late, repeated, or reordered commands
+  are dropped as stale, and the
+  `telemetry_prefix ++ [:replication, :stale]` event reports them.
+
+  A local write is applied at once and versioned with the wall clock. When
+  the clock is behind the logged version for the key, the version is
+  raised above it, so the write is not lost on the other nodes.
+
+  The log keeps an entry for at least the version window, which is
+  derived from the replication options: `interval + timeout * (retries + 1)
+  + retry_delay * retries`, or four `:anti_entropy_interval`s if that is
+  longer. With the default options it is about four minutes. Values in the
+  primary cache carry no version, so the rule covers changes no further
+  apart than the window. Older differences between nodes are settled by
+  the next write or by the TTL, which is why a TTL is a good idea for
+  entries that must not stay stale.
+
+  Versions are wall-clock timestamps, so the nodes are expected to keep
+  their clocks in sync (for example, with NTP).
+
+  `touch` and `expire` are replicated as their own commands and applied
+  after the last put of the key. A `delete_all` with a query resolves its
+  keys on the node that runs it and replicates one delete per key.
 
   ## When to Use
 
@@ -334,6 +365,21 @@ defmodule Nebulex.Adapters.Replicated do
       reconciled automatically on the next AE cycle. Without anti-entropy,
       a discarded write stays local until the same key is written again
       (which produces a fresh replication attempt).
+
+    * `telemetry_prefix ++ [:replication, :stale]` - Dispatched when a
+      processed inbox batch dropped commands because the node already had a
+      newer version for their keys (or a newer flush). It is emitted once
+      per batch that dropped at least one command.
+
+      * Measurements: `%{count: pos_integer}`
+      * Metadata:
+
+        ```
+        %{
+          adapter_meta: %{optional(atom) => term},
+          node: atom
+        }
+        ```
 
   The `:errors` field in the `:stop` metadata is a list of `{error, node}`
   tuples for each peer node that failed to receive the replication batch.
@@ -555,7 +601,8 @@ defmodule Nebulex.Adapters.Replicated do
 
     * _**Queryable Operations**_: General queries (`get_all`, `count_all`,
       `stream`) operate on the local cache only. `delete_all` operates
-      locally and replicates the deletion to all peer nodes.
+      locally and replicates the deletion to all peer nodes: one delete per
+      matching key for a query, or one flush when there is no query.
 
     * _**Shutdown Race**_: During cache shutdown the buffers stop before
       the primary store (`:rest_for_one` order). An in-flight write that
@@ -582,7 +629,7 @@ defmodule Nebulex.Adapters.Replicated do
 
   import Nebulex.Utils
 
-  alias __MODULE__.Options
+  alias __MODULE__.{Options, Replicator, VersionLog}
   alias Nebulex.Adapter
   alias Nebulex.Distributed.Cluster
   alias Tidefall.HashMap, as: HM
@@ -711,7 +758,9 @@ defmodule Nebulex.Adapters.Replicated do
       replication_retry_delay: Keyword.fetch!(replication_opts, :retry_delay),
       bootstrap_chunk_size: Keyword.fetch!(replication_opts, :bootstrap_chunk_size),
       anti_entropy_interval: Keyword.get(replication_opts, :anti_entropy_interval),
-      rt_buffer_opts: rt_buffer_opts(replication_opts)
+      rt_buffer_opts: rt_buffer_opts(replication_opts),
+      version_log: VersionLog.name(name),
+      version_window: version_window(replication_opts)
     }
 
     # Prepare child spec
@@ -819,20 +868,11 @@ defmodule Nebulex.Adapters.Replicated do
   @impl true
   def execute(adapter_meta, query, opts)
 
-  def execute(adapter_meta, %{op: :delete_all, query: {:in, [_ | _] = keys}} = query, opts) do
-    query = build_query(query)
-
-    with {:ok, count} = ok when count > 0 <-
-           with_dynamic_cache(adapter_meta, :delete_all, [query, opts]) do
-      Enum.each(keys, fn key ->
-        :ok = replicate(adapter_meta, key, {:delete, [key, opts]})
-      end)
-
-      ok
-    end
+  def execute(adapter_meta, %{op: :delete_all, query: {:in, keys}}, opts) when is_list(keys) do
+    delete_keys(adapter_meta, keys, opts)
   end
 
-  def execute(adapter_meta, %{op: :delete_all} = query, opts) do
+  def execute(adapter_meta, %{op: :delete_all, query: {:q, nil}} = query, opts) do
     query = build_query(query)
 
     with {:ok, count} = ok when count > 0 <-
@@ -841,6 +881,14 @@ defmodule Nebulex.Adapters.Replicated do
 
       ok
     end
+  end
+
+  # The keys a query matches are resolved here, and one delete per key is
+  # replicated, so each one is ordered against the other changes of its key.
+  def execute(adapter_meta, %{op: :delete_all} = query, opts) do
+    keys = matching_keys(adapter_meta, build_query(query))
+
+    delete_keys(adapter_meta, keys, opts)
   end
 
   def execute(adapter_meta, %{op: op} = query, opts) do
@@ -893,6 +941,26 @@ defmodule Nebulex.Adapters.Replicated do
     end)
   end
 
+  @doc false
+  def matching_keys(%{cache: cache} = adapter_meta, query) do
+    case {cache.__primary__().__adapter__(), Keyword.fetch!(query, :query)} do
+      # A match spec decides what the local adapter returns, whatever the
+      # `:select` option says, so it is made to return the whole entry.
+      {Nebulex.Adapters.Local, [_ | _] = match_spec} ->
+        match_spec = Enum.map(match_spec, fn {head, conds, _body} -> {head, conds, [:"$_"]} end)
+
+        adapter_meta
+        |> with_dynamic_cache(:get_all!, [[query: match_spec], [telemetry: false]])
+        |> Enum.map(&elem(&1, 1))
+
+      {_adapter, _query} ->
+        with_dynamic_cache(adapter_meta, :get_all!, [
+          Keyword.put(query, :select, :key),
+          [telemetry: false]
+        ])
+    end
+  end
+
   ## Private functions
 
   defp do_put(:put, adapter_meta, key, value, primary_opts) do
@@ -919,6 +987,17 @@ defmodule Nebulex.Adapters.Replicated do
     with_dynamic_cache(adapter_meta, :put_new_all, [entries, primary_opts])
   end
 
+  defp delete_keys(adapter_meta, keys, opts) do
+    with {:ok, count} = ok when count > 0 <-
+           with_dynamic_cache(adapter_meta, :delete_all, [[in: keys], opts]) do
+      Enum.each(keys, fn key ->
+        :ok = replicate(adapter_meta, key, {:delete, [key, opts]})
+      end)
+
+      ok
+    end
+  end
+
   defp build_query(%{select: select, query: query}) do
     query = with {:q, q} <- query, do: {:query, q}
 
@@ -926,20 +1005,50 @@ defmodule Nebulex.Adapters.Replicated do
   end
 
   defp replicate(%{inbox: inbox, outbox: outbox} = adapter_meta, key, command) do
-    # Wall-clock version so that timestamps are comparable across nodes
-    # (monotonic_time has a per-node epoch and cannot be compared cross-node).
-    version = System.system_time()
+    version = local_version(adapter_meta, key, command)
+    {buffer_key, opts} = Replicator.buffer_key(key, command, adapter_meta.rt_buffer_opts)
+    :ok = maybe_put_barrier(adapter_meta, command, version)
 
     # Inbox tagged :local (for conflict resolution, won't re-apply);
     # outbox carries the bare command and is tagged :remote on delivery.
-    safe_put(adapter_meta, :inbox, inbox, key, {command, :local}, version, command)
-    safe_put(adapter_meta, :outbox, outbox, key, command, version, command)
+    safe_put(adapter_meta, :inbox, inbox, buffer_key, {command, :local}, version, opts, command)
+    safe_put(adapter_meta, :outbox, outbox, buffer_key, command, version, opts, command)
 
     :ok
   end
 
-  defp safe_put(adapter_meta, buffer, table, key, value, version, command) do
-    HM.put_newer(table, key, value, [{:version, version} | adapter_meta.rt_buffer_opts])
+  # Wall-clock version so that timestamps are comparable across nodes
+  # (monotonic_time has a per-node epoch and cannot be compared cross-node).
+  # It is raised above the logged version when the clock is behind it, or
+  # this write would lose on every peer while staying here. The log is gone
+  # during a shutdown (it stops with the buffers), and the clock is enough
+  # then since the replication of this write is dropped anyway.
+  defp local_version(%{version_log: log}, key, command) do
+    case command do
+      {:delete_all, _args} -> VersionLog.next_flush_version(log)
+      _command -> VersionLog.next_version(log, key)
+    end
+  rescue
+    ArgumentError -> System.system_time()
+  end
+
+  # A local flush is already applied, so its barrier is set at once: a put
+  # older than the flush that another partition processes before the
+  # flush's own marker would bring a flushed key back.
+  defp maybe_put_barrier(%{version_log: log}, {:delete_all, _args}, version) do
+    _ = VersionLog.put_barrier(log, version)
+
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp maybe_put_barrier(_adapter_meta, _command, _version) do
+    :ok
+  end
+
+  defp safe_put(adapter_meta, buffer, table, key, value, version, opts, command) do
+    HM.put_newer(table, key, value, [{:version, version} | opts])
   rescue
     exception ->
       emit_discarded(adapter_meta, buffer, key, command, :error, exception, __STACKTRACE__)
@@ -966,6 +1075,14 @@ defmodule Nebulex.Adapters.Replicated do
         stacktrace: stacktrace
       }
     )
+  end
+
+  defp version_window(replication_opts) do
+    replication_opts
+    |> Keyword.take([:interval, :timeout, :retries, :retry_delay, :anti_entropy_interval])
+    |> Map.new()
+    |> Map.put_new(:anti_entropy_interval, nil)
+    |> VersionLog.window()
   end
 
   # Runtime opts passed to every Tidefall buffer write (`put_newer` /

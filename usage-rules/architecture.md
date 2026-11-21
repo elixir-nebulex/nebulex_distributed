@@ -48,7 +48,9 @@ is in `lib/` and `test/`.
 - `Nebulex.Distributed.RPC` wraps the remote calls the adapters make.
 - `Nebulex.Distributed.Transaction` is the default transaction
   implementation for the distributed adapters.
-- In `Replicated`, `Replicator` processes the outbox/inbox batches and
+- In `Replicated`, `VersionLog` keeps the last version of each key changed
+  recently, `Replicator` processes the outbox/inbox batches (the inbox
+  processor is the one place that applies a change from another node) and
   streams the bootstrap entries, `ClusterMonitor` watches node joins and
   elects the bootstrap leader, and `AntiEntropy` runs the reconciliation
   cycle.
