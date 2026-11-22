@@ -107,13 +107,13 @@ jobs:
       - name: Run tests
         run: |
           epmd -daemon
-          mix test
+          mix test --warnings-as-errors
         if: ${{ !matrix.coverage }}
 
       - name: Run tests with coverage
         run: |
           epmd -daemon
-          mix coveralls.json
+          mix coveralls.json --warnings-as-errors
         if: ${{ matrix.coverage }}
 
       - name: Upload coverage reports to Codecov

@@ -84,11 +84,8 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       assert CoherentCache.put(:key1, "primary_value") == :ok
       assert CoherentCache.get!(:key1) == "primary_value"
 
-      # Wait for invalidation to propagate
-      assert_eventually fn ->
-        # Remote node should have the entry invalidated (cache miss)
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key1, nil, []]) == {:ok, nil}
-      end
+      # Remote node should have the entry invalidated (cache miss)
+      assert_invalidated(remote_node, name, [:key1])
     end
 
     test "invalidates entry on remote nodes when deleted locally", %{name: name, cluster: cluster} do
@@ -101,12 +98,9 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
 
       # Delete on primary node
       :ok = CoherentCache.delete(:key2)
-      assert CoherentCache.get(:key2) == {:ok, nil}
+      assert CoherentCache.has_key?(:key2) == {:ok, false}
 
-      # Wait for invalidation to propagate
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key2, nil, []]) == {:ok, nil}
-      end
+      assert_invalidated(remote_node, name, [:key2])
     end
 
     test "invalidation via take removes entry on remote nodes", %{name: name, cluster: cluster} do
@@ -124,10 +118,7 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       # Take from primary (removes and returns value)
       assert CoherentCache.take!(:take_key) == "local_take_value"
 
-      # Wait for invalidation
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :take_key, nil, []]) == {:ok, nil}
-      end
+      assert_invalidated(remote_node, name, [:take_key])
     end
 
     test "does not invalidate local entry when remote node writes", %{name: name, cluster: cluster} do
@@ -141,9 +132,7 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       :ok = :rpc.call(remote_node, CoherentCache, :put, [name, :local_key, "remote_value", []])
 
       # Primary node should have been invalidated
-      assert_eventually fn ->
-        assert CoherentCache.get(:local_key) == {:ok, nil}
-      end
+      assert_invalidated(node(), name, [:local_key])
     end
 
     test "invalidation via incr propagates to remote nodes", %{name: name, cluster: cluster} do
@@ -156,10 +145,7 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       # Increment on primary node (creates new counter starting from 0 + amount)
       assert CoherentCache.incr!(:counter, 5) == 5
 
-      # Wait for invalidation
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :counter, nil, []]) == {:ok, nil}
-      end
+      assert_invalidated(remote_node, name, [:counter])
     end
 
     test "invalidation via put_all propagates to remote nodes", %{name: name, cluster: cluster} do
@@ -177,11 +163,7 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       assert CoherentCache.get!(:key1) == "primary_value1"
       assert CoherentCache.get!(:key2) == "primary_value2"
 
-      # Wait for invalidation
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key1, nil, []]) == {:ok, nil}
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key2, nil, []]) == {:ok, nil}
-      end
+      assert_invalidated(remote_node, name, [:key1, :key2])
     end
 
     test "invalidation via delete_all propagates to remote nodes", %{name: name, cluster: cluster} do
@@ -196,14 +178,10 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
 
       # Delete on primary node
       assert CoherentCache.delete_all!() == 0
-      assert CoherentCache.get!(:key1) == nil
-      assert CoherentCache.get!(:key2) == nil
+      assert CoherentCache.has_key?(:key1) == {:ok, false}
+      assert CoherentCache.has_key?(:key2) == {:ok, false}
 
-      # Wait for invalidation
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key1, nil, []]) == {:ok, nil}
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key2, nil, []]) == {:ok, nil}
-      end
+      assert_invalidated(remote_node, name, [:key1, :key2])
     end
 
     test "invalidation via delete_all keys propagates to remote nodes", %{
@@ -222,11 +200,54 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       # Delete on primary node
       assert CoherentCache.delete_all!(in: [:key1]) == 0
 
-      # Wait for invalidation
-      assert_eventually fn ->
-        assert :rpc.call(remote_node, CoherentCache, :get, [name, :key1, nil, []]) == {:ok, nil}
-        assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key2, nil, []]) == "value2"
-      end
+      assert_invalidated(remote_node, name, [:key1])
+      assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key2, nil, []]) == "value2"
+    end
+
+    test "invalidation via delete_all query propagates to remote nodes", %{
+      name: name,
+      cluster: cluster
+    } do
+      remote_node = find_remote_node(cluster)
+
+      :ok =
+        :rpc.call(remote_node, CoherentCache, :put_all, [name, [key1: "value1", key2: "value2"], []])
+
+      # Matches the entry under :key1 only
+      query = [{{:entry, :key1, :_, :_, :_, :_}, [], [true]}]
+
+      assert CoherentCache.delete_all!(query: query) == 0
+
+      assert_invalidated(remote_node, name, [:key1])
+      assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key2, nil, []]) == "value2"
+    end
+
+    test "invalidation via delete_all propagates from an unnamed cache", %{cluster: cluster} do
+      remote_node = find_remote_node(cluster)
+
+      node_pid_list = start_caches([node() | Node.list()], [{CoherentCache, []}])
+
+      on_exit(fn -> stop_caches(node_pid_list) end)
+
+      :ok = :rpc.call(remote_node, CoherentCache, :put, [CoherentCache, :key1, "value1", []])
+
+      assert CoherentCache.delete_all!(CoherentCache, [], []) == 0
+
+      assert_invalidated(remote_node, CoherentCache, [:key1])
+    end
+
+    test "delete_all with telemetry disabled does not invalidate remote nodes", %{
+      name: name,
+      cluster: cluster
+    } do
+      assert_no_remote_invalidation(name, cluster, telemetry: false)
+    end
+
+    test "delete_all made by the stream invalidator is not broadcast again", %{
+      name: name,
+      cluster: cluster
+    } do
+      assert_no_remote_invalidation(name, cluster, telemetry_metadata: %{source: :nebulex_streams})
     end
   end
 
@@ -237,6 +258,31 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
   end
 
   ## Private functions
+
+  defp assert_invalidated(node, name, keys) do
+    wait_until fn ->
+      for key <- keys do
+        assert :rpc.call(node, CoherentCache, :has_key?, [name, key, []]) == {:ok, false}
+      end
+    end
+  end
+
+  # Runs a `delete_all` with `opts` that must not reach the remote node. A
+  # node gets the invalidations from one sender in order, so once a later
+  # marker invalidation has arrived, the first one would have arrived too.
+  defp assert_no_remote_invalidation(name, cluster, opts) do
+    remote_node = find_remote_node(cluster)
+
+    :ok =
+      :rpc.call(remote_node, CoherentCache, :put_all, [name, [key1: "value1", marker: true], []])
+
+    assert CoherentCache.delete_all!([in: [:key1]], opts) == 0
+    assert CoherentCache.delete_all!(in: [:marker]) == 0
+
+    assert_invalidated(remote_node, name, [:marker])
+
+    assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key1, nil, []]) == "value1"
+  end
 
   defp find_remote_node(cluster) do
     cluster

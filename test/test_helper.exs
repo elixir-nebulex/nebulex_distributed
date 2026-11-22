@@ -20,7 +20,9 @@ end
 # Mocks
 [
   ExHashRing.Ring,
+  Nebulex.Adapters.Replicated.VersionLog,
   Nebulex.Distributed.Cluster,
+  Nebulex.Distributed.RPC,
   Nebulex.Distributed.TestCache.Multilevel.L1,
   Nebulex.Distributed.TestCache.Multilevel.L2,
   Nebulex.Distributed.TestCache.Multilevel.L3,

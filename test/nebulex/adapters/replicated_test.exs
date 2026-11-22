@@ -8,11 +8,11 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
   import Nebulex.CacheCase
 
   alias Nebulex.Adapter
+  alias Nebulex.Adapters.Replicated
   alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
   alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{ReplicatedCache, ReplicatedNilCache}
   alias Nebulex.Telemetry
-  alias Nebulex.Utils
 
   @moduletag capture_log: true
 
@@ -33,8 +33,10 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         ]
       )
 
-    # Wait for caches to be ready on all nodes
-    :ok = Process.sleep(100)
+    wait_until fn ->
+      assert ReplicatedCache.nodes(@cache_name) |> Enum.sort() == Enum.sort(nodes)
+      assert ReplicatedNilCache.nodes() |> Enum.sort() == Enum.sort(nodes)
+    end
 
     default_dynamic_cache = ReplicatedCache.get_dynamic_cache()
     _ = ReplicatedCache.put_dynamic_cache(@cache_name)
@@ -87,8 +89,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
     end
 
     test "cluster monitor updates cluster view on PG leave event" do
-      cm_name = Utils.camelize_and_concat([@cache_name, "ClusterMonitor"])
-      cm_pid = Process.whereis(cm_name)
+      cm_pid = @cache_name |> ReplicatedCache.get_pg_group() |> Process.whereis()
 
       # Get the current state to extract pg_ref and pg_group
       %{pg_ref: pg_ref, pg_group: pg_group, cluster_nodes: cluster_nodes} =
@@ -100,31 +101,39 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       fake_pid = self()
       send(cm_pid, {pg_ref, :leave, pg_group, [fake_pid]})
 
-      # Allow the message to be processed
-      :ok = Process.sleep(50)
-
-      # Verify the cluster view was updated (current node removed)
+      # The state is read with a call, so it is answered after the leave event
+      # was handled. The current node must be removed from the view.
       %{cluster_nodes: updated_nodes} = :sys.get_state(cm_pid)
       refute MapSet.member?(updated_nodes, node())
     end
 
     test "join and leave cluster", %{nodes: nodes, name: name} do
+      pg_group = ReplicatedCache.get_pg_group(name)
+      cm_pid = Process.whereis(pg_group)
+
       assert ReplicatedCache.nodes() |> Enum.sort() == Enum.sort(nodes)
 
       ReplicatedCache.with_dynamic_cache(name, fn ->
         :ok = ReplicatedCache.leave_cluster()
 
-        assert_eventually fn ->
+        wait_until fn ->
           assert ReplicatedCache.nodes() |> Enum.sort() == (nodes -- [node()]) |> Enum.sort()
         end
+
+        refute cm_pid in :pg.get_members(Cluster.pg_scope(), pg_group)
       end)
 
       ReplicatedCache.with_dynamic_cache(name, fn ->
         :ok = ReplicatedCache.join_cluster()
 
-        assert_eventually fn ->
+        wait_until fn ->
           assert ReplicatedCache.nodes() |> Enum.sort() == Enum.sort(nodes)
         end
+
+        members = :pg.get_members(Cluster.pg_scope(), pg_group)
+
+        assert cm_pid in members
+        refute self() in members
       end)
     end
   end
@@ -259,7 +268,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
       :ok = :rpc.call(remote_node, ReplicatedCache, :put, [name, :remote_key, "remote_val", []])
 
-      assert_eventually fn ->
+      wait_until fn ->
         assert ReplicatedCache.get!(:remote_key) == "remote_val"
       end
     end
@@ -288,7 +297,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       # Expire with a short TTL
       assert ReplicatedCache.expire(:exp_key, :timer.seconds(1)) == {:ok, true}
 
-      assert_remote_nodes(cluster, :ttl, [name, :exp_key, nil, []], fn {:ok, ttl} ->
+      assert_remote_nodes(cluster, :ttl, [name, :exp_key, []], fn {:ok, ttl} ->
         assert ttl <= :timer.seconds(1)
       end)
     end
@@ -302,7 +311,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
       assert ReplicatedCache.touch(:touch_key) == {:ok, true}
 
-      assert_remote_nodes(cluster, :has_key?, [name, :touch_key, nil, []], fn result ->
+      assert_remote_nodes(cluster, :has_key?, [name, :touch_key, []], fn result ->
         assert result == {:ok, true}
       end)
     end
@@ -449,10 +458,10 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert ReplicatedCache.put(:pe_key3, "value3") == :ok
 
       # Push entries to the remote peer using put_new
-      assert Replicator.push_entries(remote_node, adapter_meta) >= 3
+      assert Replicator.push_entries(remote_node, adapter_meta) == {3, []}
 
       # Wait for the remote node to process entries
-      assert_eventually fn ->
+      wait_until fn ->
         result =
           :rpc.call(remote_node, ReplicatedCache, :get_all!, [
             @cache_name,
@@ -460,13 +469,13 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
             []
           ])
 
-        assert result == %{pe_key1: "value1", pe_key2: "value2", pe_key3: "value3"}
+        assert Map.new(result) == %{pe_key1: "value1", pe_key2: "value2", pe_key3: "value3"}
       end
 
       # Verify TTL was preserved for pe_key2
-      assert_eventually fn ->
+      wait_until fn ->
         {:ok, ttl} =
-          :rpc.call(remote_node, ReplicatedCache, :ttl, [@cache_name, :pe_key2, nil, []])
+          :rpc.call(remote_node, ReplicatedCache, :ttl, [@cache_name, :pe_key2, []])
 
         assert is_integer(ttl) and ttl > 0 and ttl <= :timer.seconds(60)
       end
@@ -477,7 +486,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       fake_node = :"nonexistent@127.0.0.1"
 
       # No data locally, push_entries should return 0 without making any RPC
-      assert Replicator.push_entries(fake_node, adapter_meta) == 0
+      assert Replicator.push_entries(fake_node, adapter_meta) == {0, []}
     end
 
     test "push_entries does not overwrite existing data on target (put_new semantics)",
@@ -492,24 +501,23 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         [:pn_existing, "remote_value", []]
       ])
 
-      # Put a different value locally for the same key
-      assert ReplicatedCache.put(:pn_existing, "local_value") == :ok
+      # Put a different value in the local primary storage only, so normal
+      # replication cannot overwrite the remote value during the test
+      :ok =
+        Replicated.with_dynamic_cache(adapter_meta, :put, [
+          :pn_existing,
+          "local_value",
+          []
+        ])
 
-      # Push entries to the remote peer — should NOT overwrite remote_value
-      assert Replicator.push_entries(remote_node, adapter_meta) >= 1
+      # Push entries to the remote peer — should NOT overwrite remote_value.
+      # The push is a synchronous RPC, so the remote has applied the entries
+      # by the time it returns.
+      assert Replicator.push_entries(remote_node, adapter_meta) == {1, []}
 
       # Remote node should still have the original value (put_new is a no-op)
-      assert_eventually fn ->
-        result =
-          :rpc.call(remote_node, ReplicatedCache, :get!, [
-            @cache_name,
-            :pn_existing,
-            nil,
-            []
-          ])
-
-        assert result == "remote_value"
-      end
+      assert :rpc.call(remote_node, ReplicatedCache, :get!, [@cache_name, :pn_existing, nil, []]) ==
+               "remote_value"
     end
 
     test "apply_bootstrap_entries writes entries to local cache" do
@@ -563,9 +571,15 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert ReplicatedCache.put(:bs_key2, "value2", ttl: :timer.seconds(60)) == :ok
       assert ReplicatedCache.put(:bs_key3, "value3") == :ok
 
-      # Wait for replication to all nodes
-      assert_remote_nodes(cluster, :get!, [name, :bs_key1, nil, []], fn result ->
-        assert result == "value1"
+      # Wait for every key on every node. The outbox partitions flush on their
+      # own timers, so one key arriving says nothing about the others. A key
+      # still in flight at the restart is drained to the peers' inboxes and
+      # can miss the bootstrap push, which runs before they apply it.
+      keys = [:bs_key1, :bs_key2, :bs_key3]
+      expected = %{bs_key1: "value1", bs_key2: "value2", bs_key3: "value3"}
+
+      assert_remote_nodes(cluster, :get_all!, [name, [in: keys], []], fn result ->
+        assert Map.new(result) == expected
       end)
 
       # Stop the cache on the primary (current) node
@@ -575,13 +589,12 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       {:ok, _pid} = ReplicatedCache.start_link(name: name, replication: [interval: 100])
 
       # Wait for inverted bootstrap (existing nodes push) + processing
-      assert_eventually fn ->
-        assert ReplicatedCache.get_all!(in: [:bs_key1, :bs_key2, :bs_key3]) ==
-                 %{bs_key1: "value1", bs_key2: "value2", bs_key3: "value3"}
+      wait_until fn ->
+        assert ReplicatedCache.get_all!(in: keys) |> Map.new() == expected
       end
 
       # Verify TTL was preserved for bs_key2
-      assert_eventually fn ->
+      wait_until fn ->
         ttl = ReplicatedCache.ttl!(:bs_key2)
 
         assert is_integer(ttl) and ttl > 0 and ttl <= :timer.seconds(60)
@@ -611,14 +624,14 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
         assert pusher == node()
 
-        assert_receive {^stopped, %{duration: _}, %{adapter_meta: _, total: total}}, 5000
-
-        assert is_integer(total) and total >= 1
+        assert_receive {^stopped, %{duration: _},
+                        %{adapter_meta: _, total: 1, errors: [], anti_entropy: true}},
+                       5000
       end
     end
   end
 
-  describe "anti-entropy" do
+  describe "anti-entropy functions called by nodes on the previous release" do
     test "build_buckets returns a list of 1024 bucket hashes" do
       adapter_meta = Adapter.lookup_meta(@cache_name)
 
@@ -688,149 +701,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert Keyword.has_key?(opts, :ttl)
     end
 
-    test "do_reconcile repairs divergent entries from peer", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node's primary (bypass replication)
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_direct_key, "direct_value", []]
-      ])
-
-      # Verify key does NOT exist locally
-      assert ReplicatedCache.get(:ae_direct_key) == {:ok, nil}
-
-      # Call do_reconcile directly (in test process, ensures coverage)
-      {repaired, divergent_buckets} = AntiEntropy.do_reconcile(remote_node, adapter_meta)
-
-      assert repaired > 0
-      assert divergent_buckets > 0
-
-      # Wait for inbox processing
-      assert_eventually fn ->
-        assert ReplicatedCache.get!(:ae_direct_key) == "direct_value"
-      end
-    end
-
-    test "reconcile repairs divergent keys from peer", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node's primary (bypass replication)
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_repair_key, "repaired_value", []]
-      ])
-
-      # Verify key does NOT exist locally
-      assert ReplicatedCache.get(:ae_repair_key) == {:ok, nil}
-
-      # Start anti-entropy for this test (it's not started by default)
-      ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-      {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-      # Wait for at least one cycle to run
-      :ok = Process.sleep(700)
-
-      # Key should now be repaired locally via inbox
-      assert_eventually fn ->
-        assert ReplicatedCache.get!(:ae_repair_key) == "repaired_value"
-      end
-
-      # Cleanup
-      GenServer.stop(ae_pid)
-    end
-
-    test "anti-entropy emits telemetry span events", %{cluster: cluster} do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      remote_node = find_remote_node(cluster)
-
-      # Put data only on the remote node to create divergence
-      :rpc.call(remote_node, Nebulex.Adapters.Replicated, :with_dynamic_cache, [
-        adapter_meta,
-        :put,
-        [:ae_tel_key, "tel_value", []]
-      ])
-
-      started = @telemetry_prefix ++ [:anti_entropy, :start]
-      stopped = @telemetry_prefix ++ [:anti_entropy, :stop]
-
-      with_telemetry_handler __MODULE__, [started, stopped], fn ->
-        ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-        {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-        assert_receive {^started, %{system_time: _}, %{adapter_meta: _, node: node, peer: peer}},
-                       5000
-
-        assert node == node()
-
-        pg_nodes = Cluster.pg_nodes(adapter_meta.pg_group)
-
-        assert peer in Enum.reject(pg_nodes, &(&1 == node()))
-
-        assert_receive {^stopped, %{duration: _},
-                        %{
-                          adapter_meta: _,
-                          node: _,
-                          peer: _,
-                          repaired: repaired,
-                          divergent_buckets: divergent_buckets
-                        }},
-                       5000
-
-        assert is_integer(repaired)
-        assert is_integer(divergent_buckets)
-
-        GenServer.stop(ae_pid)
-      end
-    end
-
-    test "anti-entropy with no peers does nothing" do
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 100)
-
-      # Temporarily leave the PG group so there are no peers
-      :ok = Cluster.leave(adapter_meta.pg_group)
-
-      {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-      # Wait for a cycle — should not crash
-      :ok = Process.sleep(200)
-
-      assert Process.alive?(ae_pid)
-
-      GenServer.stop(ae_pid)
-
-      # Rejoin
-      :ok = Cluster.join(adapter_meta.pg_group)
-    end
-
-    test "reconcile does nothing when caches are in sync", %{name: name, cluster: cluster} do
-      # Put data and wait for replication so all nodes are in sync
-      assert ReplicatedCache.put(:ae_sync1, "v1") == :ok
-      assert ReplicatedCache.put(:ae_sync2, "v2") == :ok
-
-      assert_remote_nodes(cluster, :get!, [name, :ae_sync1, nil, []], fn result ->
-        assert result == "v1"
-      end)
-
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-      stopped = @telemetry_prefix ++ [:anti_entropy, :stop]
-
-      with_telemetry_handler __MODULE__, [stopped], fn ->
-        ae_meta = Map.put(adapter_meta, :anti_entropy_interval, 500)
-        {:ok, ae_pid} = AntiEntropy.start_link(ae_meta)
-
-        assert_receive {^stopped, %{duration: _}, %{repaired: 0, divergent_buckets: 0}},
-                       5000
-
-        GenServer.stop(ae_pid)
-      end
-    end
-
     test "entries_for_buckets skips entries when TTL lookup fails" do
       primary = ReplicatedCache.__primary__()
       adapter_meta = Adapter.lookup_meta(@cache_name)
@@ -860,38 +730,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       refute Map.has_key?(entries_map, :ae_ttl_fail)
       assert Map.has_key?(entries_map, :ae_ttl_ok)
     end
-
-    test "anti-entropy is not started when interval is not configured" do
-      # The default setup doesn't set anti_entropy_interval,
-      # so AntiEntropy should not be in the supervision tree
-      adapter_meta = Adapter.lookup_meta(@cache_name)
-
-      ae_name = Utils.camelize_and_concat([@cache_name, "AntiEntropy"])
-
-      assert Process.whereis(ae_name) == nil
-      assert adapter_meta[:anti_entropy_interval] == nil
-    end
-
-    test "cache started with anti_entropy_interval runs the GenServer" do
-      cache_name = :replicated_ae_cache
-
-      cache_opts = [
-        name: cache_name,
-        replication: [interval: 100, anti_entropy_interval: 500]
-      ]
-
-      {:ok, pid} = ReplicatedCache.start_link(cache_opts)
-
-      # The GenServer name uses the bare "AntiEntropy" atom
-      ae_name = Utils.camelize_and_concat([cache_name, "AntiEntropy"])
-
-      ae_pid = Process.whereis(ae_name)
-
-      assert ae_pid != nil
-      assert Process.alive?(ae_pid)
-
-      Supervisor.stop(pid)
-    end
   end
 
   describe "info" do
@@ -906,7 +744,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
     cluster
     |> Enum.reject(&(&1 == node()))
     |> Enum.each(fn node ->
-      assert_eventually fn ->
+      wait_until fn ->
         result = :rpc.call(node, ReplicatedCache, fun, args)
 
         callback.(result)

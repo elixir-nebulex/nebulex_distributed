@@ -112,18 +112,18 @@ defmodule Nebulex.Adapters.Replicated.Options do
       """
     ],
     anti_entropy_interval: [
-      type: :pos_integer,
+      type: {:or, [:pos_integer, {:in, [false]}]},
       required: false,
+      default: :timer.minutes(1),
       doc: """
-      Interval in milliseconds between anti-entropy reconciliation
-      cycles. When set, a background process periodically picks a
-      random peer, compares bucket-hashed Merkle digests of the local
-      and remote caches, and repairs only the divergent keys by
-      writing them through the inbox (preserving "newer version wins"
-      semantics).
+      Interval in milliseconds between anti-entropy cycles. On every cycle,
+      a background process picks a random peer and takes the recent changes
+      this node missed, in the right direction, deletes included. When the
+      node starts, and when a partition heals, it also fills the keys this
+      node has no value for. See the "Anti-Entropy Reconciliation" section in the module
+      documentation.
 
-      Disabled by default (not present). Set to a positive integer
-      to enable, e.g., `:timer.minutes(1)`.
+      Set it to `false` to disable anti-entropy.
       """
     ],
     bootstrap_chunk_size: [
