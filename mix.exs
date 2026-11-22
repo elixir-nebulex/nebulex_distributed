@@ -106,7 +106,7 @@ defmodule NebulexDistributed.MixProject do
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
-        "coveralls.html",
+        "coveralls.html --warnings-as-errors",
         "sobelow --skip --exit Low",
         "dialyzer --format short",
         "docs --warnings-as-errors"

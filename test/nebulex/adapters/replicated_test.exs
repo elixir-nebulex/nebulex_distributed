@@ -13,7 +13,6 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
   alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{ReplicatedCache, ReplicatedNilCache}
   alias Nebulex.Telemetry
-  alias Nebulex.Utils
 
   @moduletag capture_log: true
 
