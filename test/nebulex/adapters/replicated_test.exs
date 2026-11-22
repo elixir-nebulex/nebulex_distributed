@@ -34,8 +34,10 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         ]
       )
 
-    # Wait for caches to be ready on all nodes
-    :ok = Process.sleep(100)
+    wait_until fn ->
+      assert ReplicatedCache.nodes(@cache_name) |> Enum.sort() == Enum.sort(nodes)
+      assert ReplicatedNilCache.nodes() |> Enum.sort() == Enum.sort(nodes)
+    end
 
     default_dynamic_cache = ReplicatedCache.get_dynamic_cache()
     _ = ReplicatedCache.put_dynamic_cache(@cache_name)
@@ -100,10 +102,8 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       fake_pid = self()
       send(cm_pid, {pg_ref, :leave, pg_group, [fake_pid]})
 
-      # Allow the message to be processed
-      :ok = Process.sleep(50)
-
-      # Verify the cluster view was updated (current node removed)
+      # The state is read with a call, so it is answered after the leave event
+      # was handled. The current node must be removed from the view.
       %{cluster_nodes: updated_nodes} = :sys.get_state(cm_pid)
       refute MapSet.member?(updated_nodes, node())
     end
@@ -572,9 +572,15 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       assert ReplicatedCache.put(:bs_key2, "value2", ttl: :timer.seconds(60)) == :ok
       assert ReplicatedCache.put(:bs_key3, "value3") == :ok
 
-      # Wait for replication to all nodes
-      assert_remote_nodes(cluster, :get!, [name, :bs_key1, nil, []], fn result ->
-        assert result == "value1"
+      # Wait for every key on every node. The outbox partitions flush on their
+      # own timers, so one key arriving says nothing about the others. A key
+      # still in flight at the restart is drained to the peers' inboxes and
+      # can miss the bootstrap push, which runs before they apply it.
+      keys = [:bs_key1, :bs_key2, :bs_key3]
+      expected = %{bs_key1: "value1", bs_key2: "value2", bs_key3: "value3"}
+
+      assert_remote_nodes(cluster, :get_all!, [name, [in: keys], []], fn result ->
+        assert Map.new(result) == expected
       end)
 
       # Stop the cache on the primary (current) node
@@ -585,8 +591,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
 
       # Wait for inverted bootstrap (existing nodes push) + processing
       wait_until fn ->
-        assert ReplicatedCache.get_all!(in: [:bs_key1, :bs_key2, :bs_key3]) |> Map.new() ==
-                 %{bs_key1: "value1", bs_key2: "value2", bs_key3: "value3"}
+        assert ReplicatedCache.get_all!(in: keys) |> Map.new() == expected
       end
 
       # Verify TTL was preserved for bs_key2

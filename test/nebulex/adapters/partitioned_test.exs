@@ -349,7 +349,10 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
 
         node = teardown_cache(1234)
 
-        assert_receive {^nodes_removed, %{system_time: _}, %{nodes: nodes}}, 5000
+        assert_receive {^nodes_removed, %{system_time: _},
+                        %{nodes: nodes, adapter_meta: %{name: @cache_name}}},
+                       5000
+
         assert node in nodes
 
         refute PartitionedCache.get!(1234)
@@ -383,12 +386,21 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
           |> Process.whereis()
           |> Process.exit(:stop)
 
-        assert_receive {^exit_sig, %{system_time: _}, %{reason: :stop}}, 5000
-        assert_receive {^stopped, %{system_time: _}, %{reason: :stop, node: ^node}}, 5000
+        assert_receive {^exit_sig, %{system_time: _},
+                        %{reason: :stop, adapter_meta: %{name: ^name}}},
+                       5000
 
-        assert_receive {^started, %{system_time: _}, %{}}, 5000
-        assert_receive {^joined, %{system_time: _}, %{node: ^node}}, 5000
-        assert_receive {^nodes_added, %{system_time: _}, %{nodes: _}}, 5000
+        assert_receive {^stopped, %{system_time: _},
+                        %{reason: :stop, node: ^node, adapter_meta: %{name: ^name}}},
+                       5000
+
+        assert_receive {^started, %{system_time: _}, %{adapter_meta: %{name: ^name}}}, 5000
+
+        assert_receive {^joined, %{system_time: _}, %{node: ^node, adapter_meta: %{name: ^name}}},
+                       5000
+
+        assert_receive {^nodes_added, %{system_time: _}, %{nodes: _, adapter_meta: %{name: ^name}}},
+                       5000
 
         assert node in PartitionedCache.nodes()
       end
@@ -427,12 +439,18 @@ defmodule Nebulex.Adapters.PartitionedCacheTest do
         PartitionedCache.get_all!([], timeout: 0)
       end
 
+      # A zero timeout still returns a reply that is already in the mailbox,
+      # and a lookup of a few keys can reply that fast, mostly when the
+      # calling node owns some of them, so the owners sleep before replying.
+      opts = [timeout: 0, before: &PartitionedNilCache.sleep_fun/0]
+
       assert_raise Nebulex.Error, ~r"RPC operation failed with reason: :timeout", fn ->
-        PartitionedCache.get_all!([in: [1, 2, 3]], timeout: 0)
+        PartitionedNilCache.get_all!([in: [1, 2, 3]], opts)
       end
 
       assert_raise Nebulex.Error, ~r"RPC operation failed with reason: :timeout", fn ->
-        PartitionedCache.stream!([in: [1, 2, 3]], timeout: 0)
+        [in: [1, 2, 3]]
+        |> PartitionedNilCache.stream!(opts)
         |> Enum.to_list()
       end
     end

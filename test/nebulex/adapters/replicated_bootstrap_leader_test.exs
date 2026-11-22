@@ -55,7 +55,14 @@ defmodule Nebulex.Adapters.ReplicatedBootstrapLeaderTest do
 
     _ = start_caches(nodes, [{ReplicatedCache, name: @cache_name, replication: [interval: 100]}])
 
-    :ok = Process.sleep(200)
+    # A monitor adds a joined node to its view only after pushing to it, so
+    # once every view holds every node, the startup pushes are done and none
+    # of them reaches the raising Replicator compiled on node4 below.
+    wait_until(fn ->
+      for node <- nodes do
+        assert monitor_state(node).cluster_nodes == MapSet.new(nodes)
+      end
+    end)
 
     default_dynamic_cache = ReplicatedCache.get_dynamic_cache()
     _ = ReplicatedCache.put_dynamic_cache(@cache_name)

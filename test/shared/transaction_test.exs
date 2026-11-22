@@ -69,22 +69,29 @@ defmodule Nebulex.Distributed.TransactionTest do
 
       test "aborted", %{name: name, cache: cache} do
         key = {name, :aborted}
+        test_pid = self()
 
-        Task.start_link(fn ->
-          _ = cache.put_dynamic_cache(name)
+        # The task holds the lock on the key until the test releases it.
+        {:ok, holder} =
+          Task.start_link(fn ->
+            _ = cache.put_dynamic_cache(name)
 
-          cache.transaction(
-            fn ->
-              :ok = cache.put(key, true)
+            cache.transaction(
+              fn ->
+                :ok = cache.put(key, true)
 
-              Process.sleep(1100)
-            end,
-            keys: [key],
-            retries: 1
-          )
-        end)
+                send(test_pid, :locked)
 
-        :ok = Process.sleep(200)
+                receive do
+                  :release -> :ok
+                end
+              end,
+              keys: [key],
+              retries: 1
+            )
+          end)
+
+        assert_receive :locked, 5000
 
         assert_raise Nebulex.Error, ~r/transaction aborted\n\nError metadata:/, fn ->
           {:error, %Nebulex.Error{} = reason} =
@@ -96,6 +103,8 @@ defmodule Nebulex.Distributed.TransactionTest do
 
           raise reason
         end
+
+        send(holder, :release)
       end
     end
 

@@ -265,18 +265,20 @@ defmodule Nebulex.Adapters.ReplicatedApplyTest do
   end
 
   describe "stale event" do
-    test "reports the number of commands dropped in a batch", %{meta: meta} do
+    test "reports the number of commands dropped in a batch", %{meta: %{name: name} = meta} do
       deliver(meta, [put(:k1, "new", 200), put(:k2, "new", 200)])
 
+      # Other tests run caches of the same module, so only the events of this
+      # test's cache count.
       with_telemetry_handler __MODULE__, [@stale], fn ->
         deliver(meta, [put(:k1, "old", 100), delete(:k2, 100), put(:k3, "v", 100)])
 
-        assert_receive {@stale, %{count: 2}, %{adapter_meta: %{name: _}, node: node}}
+        assert_receive {@stale, %{count: 2}, %{adapter_meta: %{name: ^name}, node: node}}
         assert node == node()
 
         deliver(meta, [put(:k4, "v", 100)])
 
-        refute_receive {@stale, _, _}, 100
+        refute_receive {@stale, _, %{adapter_meta: %{name: ^name}}}, 100
       end
     end
   end
