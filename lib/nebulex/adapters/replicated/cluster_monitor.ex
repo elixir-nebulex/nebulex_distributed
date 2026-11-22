@@ -3,8 +3,6 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
 
   use GenServer
 
-  import Nebulex.Utils
-
   alias Nebulex.Adapters.Replicated.Replicator
   alias Nebulex.Distributed.{Cluster, RPC}
   alias Nebulex.Telemetry
@@ -15,10 +13,10 @@ defmodule Nebulex.Adapters.Replicated.ClusterMonitor do
   ## API
 
   @doc false
-  def start_link(%{name: name} = adapter_meta) do
-    name = camelize_and_concat([name, ClusterMonitor])
-
-    GenServer.start_link(__MODULE__, adapter_meta, name: name)
+  def start_link(%{pg_group: pg_group} = adapter_meta) do
+    # Registered under the PG group name, so `Cluster.join/1` and
+    # `Cluster.leave/1` act on this process from any caller.
+    GenServer.start_link(__MODULE__, adapter_meta, name: pg_group)
   end
 
   ## GenServer Callbacks

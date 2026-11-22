@@ -34,6 +34,10 @@ defmodule Nebulex.Distributed.Cluster do
   @doc """
   Joins the node where the cache `name`'s supervisor process is running to the
   `name`'s node group.
+
+  The group member is the process registered under `name`, or the caller if
+  no process is registered under it. Adapters must register the process that
+  owns the membership under the group name.
   """
   @spec join(name :: atom()) :: :ok
   def join(name) do
@@ -49,6 +53,9 @@ defmodule Nebulex.Distributed.Cluster do
   @doc """
   Makes the node where the cache `name`'s supervisor process is running, leave
   the `name`'s node group.
+
+  Like `join/1`, it acts on the process registered under `name`, or on the
+  caller if no process is registered under it.
   """
   @spec leave(name :: atom()) :: :ok
   def leave(name) do

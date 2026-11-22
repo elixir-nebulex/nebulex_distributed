@@ -10,6 +10,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
   alias Nebulex.Adapter
   alias Nebulex.Adapters.Replicated
   alias Nebulex.Adapters.Replicated.{AntiEntropy, ClusterMonitor, Replicator}
+  alias Nebulex.Distributed.Cluster
   alias Nebulex.Distributed.TestCache.{ReplicatedCache, ReplicatedNilCache}
   alias Nebulex.Telemetry
   alias Nebulex.Utils
@@ -87,8 +88,7 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
     end
 
     test "cluster monitor updates cluster view on PG leave event" do
-      cm_name = Utils.camelize_and_concat([@cache_name, "ClusterMonitor"])
-      cm_pid = Process.whereis(cm_name)
+      cm_pid = @cache_name |> ReplicatedCache.get_pg_group() |> Process.whereis()
 
       # Get the current state to extract pg_ref and pg_group
       %{pg_ref: pg_ref, pg_group: pg_group, cluster_nodes: cluster_nodes} =
@@ -108,8 +108,10 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
       refute MapSet.member?(updated_nodes, node())
     end
 
-    @tag skip: "bug: leave_cluster/join_cluster act on the calling process, not the ClusterMonitor"
     test "join and leave cluster", %{nodes: nodes, name: name} do
+      pg_group = ReplicatedCache.get_pg_group(name)
+      cm_pid = Process.whereis(pg_group)
+
       assert ReplicatedCache.nodes() |> Enum.sort() == Enum.sort(nodes)
 
       ReplicatedCache.with_dynamic_cache(name, fn ->
@@ -118,6 +120,8 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         wait_until fn ->
           assert ReplicatedCache.nodes() |> Enum.sort() == (nodes -- [node()]) |> Enum.sort()
         end
+
+        refute cm_pid in :pg.get_members(Cluster.pg_scope(), pg_group)
       end)
 
       ReplicatedCache.with_dynamic_cache(name, fn ->
@@ -126,6 +130,11 @@ defmodule Nebulex.Adapters.ReplicatedCacheTest do
         wait_until fn ->
           assert ReplicatedCache.nodes() |> Enum.sort() == Enum.sort(nodes)
         end
+
+        members = :pg.get_members(Cluster.pg_scope(), pg_group)
+
+        assert cm_pid in members
+        refute self() in members
       end)
     end
   end
