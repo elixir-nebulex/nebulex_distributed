@@ -166,7 +166,6 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       assert_invalidated(remote_node, name, [:key1, :key2])
     end
 
-    @tag skip: "bug: delete_all emits no invalidation when the local delete count is 0"
     test "invalidation via delete_all propagates to remote nodes", %{name: name, cluster: cluster} do
       remote_node = find_remote_node(cluster)
 
@@ -185,7 +184,6 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       assert_invalidated(remote_node, name, [:key1, :key2])
     end
 
-    @tag skip: "bug: delete_all emits no invalidation when the local delete count is 0"
     test "invalidation via delete_all keys propagates to remote nodes", %{
       name: name,
       cluster: cluster
@@ -205,6 +203,52 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
       assert_invalidated(remote_node, name, [:key1])
       assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key2, nil, []]) == "value2"
     end
+
+    test "invalidation via delete_all query propagates to remote nodes", %{
+      name: name,
+      cluster: cluster
+    } do
+      remote_node = find_remote_node(cluster)
+
+      :ok =
+        :rpc.call(remote_node, CoherentCache, :put_all, [name, [key1: "value1", key2: "value2"], []])
+
+      # Matches the entry under :key1 only
+      query = [{{:entry, :key1, :_, :_, :_, :_}, [], [true]}]
+
+      assert CoherentCache.delete_all!(query: query) == 0
+
+      assert_invalidated(remote_node, name, [:key1])
+      assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key2, nil, []]) == "value2"
+    end
+
+    test "invalidation via delete_all propagates from an unnamed cache", %{cluster: cluster} do
+      remote_node = find_remote_node(cluster)
+
+      node_pid_list = start_caches([node() | Node.list()], [{CoherentCache, []}])
+
+      on_exit(fn -> stop_caches(node_pid_list) end)
+
+      :ok = :rpc.call(remote_node, CoherentCache, :put, [CoherentCache, :key1, "value1", []])
+
+      assert CoherentCache.delete_all!(CoherentCache, [], []) == 0
+
+      assert_invalidated(remote_node, CoherentCache, [:key1])
+    end
+
+    test "delete_all with telemetry disabled does not invalidate remote nodes", %{
+      name: name,
+      cluster: cluster
+    } do
+      assert_no_remote_invalidation(name, cluster, telemetry: false)
+    end
+
+    test "delete_all made by the stream invalidator is not broadcast again", %{
+      name: name,
+      cluster: cluster
+    } do
+      assert_no_remote_invalidation(name, cluster, telemetry_metadata: %{source: :nebulex_streams})
+    end
   end
 
   describe "info/1" do
@@ -221,6 +265,23 @@ defmodule Nebulex.Adapters.CoherentCacheTest do
         assert :rpc.call(node, CoherentCache, :has_key?, [name, key, []]) == {:ok, false}
       end
     end
+  end
+
+  # Runs a `delete_all` with `opts` that must not reach the remote node. A
+  # node gets the invalidations from one sender in order, so once a later
+  # marker invalidation has arrived, the first one would have arrived too.
+  defp assert_no_remote_invalidation(name, cluster, opts) do
+    remote_node = find_remote_node(cluster)
+
+    :ok =
+      :rpc.call(remote_node, CoherentCache, :put_all, [name, [key1: "value1", marker: true], []])
+
+    assert CoherentCache.delete_all!([in: [:key1]], opts) == 0
+    assert CoherentCache.delete_all!(in: [:marker]) == 0
+
+    assert_invalidated(remote_node, name, [:marker])
+
+    assert :rpc.call(remote_node, CoherentCache, :get!, [name, :key1, nil, []]) == "value1"
   end
 
   defp find_remote_node(cluster) do

@@ -231,6 +231,9 @@ defmodule Nebulex.Adapters.Coherent do
   import Nebulex.Utils
 
   alias __MODULE__.Options
+  alias Nebulex.Adapter
+  alias Nebulex.Event.CacheEntryEvent
+  alias Nebulex.Streams
 
   ## Nebulex.Adapter
 
@@ -392,9 +395,61 @@ defmodule Nebulex.Adapters.Coherent do
 
   @impl true
   def execute(adapter_meta, %{op: op} = query, opts) do
-    query = build_query(query)
+    adapter_meta
+    |> with_dynamic_cache(op, [build_query(query), opts])
+    |> maybe_invalidate_remote(adapter_meta, query, opts)
+  end
 
-    with_dynamic_cache(adapter_meta, op, [query, opts])
+  # Nebulex core (`Nebulex.Telemetry.CacheEntryHandler`) emits the `delete_all`
+  # cache entry event only when the local cache deleted at least one entry, so
+  # a `delete_all` that matches nothing locally would leave the matching
+  # entries on the other nodes. In that case, broadcast the invalidation here.
+  defp maybe_invalidate_remote({:ok, 0} = result, adapter_meta, %{op: :delete_all} = query, opts) do
+    _ignore = broadcast_invalidation(adapter_meta, query, opts)
+
+    result
+  end
+
+  defp maybe_invalidate_remote(result, _adapter_meta, _query, _opts) do
+    result
+  end
+
+  # Builds the event core would have built for the primary storage and
+  # broadcasts it through its stream. Like core, it does nothing when
+  # telemetry is disabled or when the primary storage or its stream isn't
+  # registered.
+  defp broadcast_invalidation(%{cache: cache} = adapter_meta, %{query: target}, opts) do
+    primary_name = adapter_meta.primary_name || cache.__primary__()
+
+    with %Streams{} = stream <- Streams.lookup(primary_name),
+         %{cache: primary, name: name, pid: pid, telemetry: telemetry} <-
+           lookup_primary_meta(primary_name),
+         true <- Keyword.get(opts, :telemetry, telemetry) do
+      metadata =
+        stream
+        |> Map.from_struct()
+        |> Map.put(:extra_metadata, Keyword.get(opts, :telemetry_metadata, %{}))
+
+      [
+        cache: primary,
+        name: name || pid,
+        pid: pid,
+        target: target,
+        command: :delete_all,
+        metadata: metadata
+      ]
+      |> CacheEntryEvent.deleted()
+      |> Streams.broadcast_event()
+    end
+  end
+
+  defp lookup_primary_meta(primary_name) do
+    Adapter.lookup_meta(primary_name)
+  rescue
+    # The primary storage served the command just before, so it is missing
+    # here only if it stopped in between.
+    # coveralls-ignore-next-line
+    Nebulex.CacheNotFoundError -> nil
   end
 
   @impl true
